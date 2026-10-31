@@ -1,0 +1,6 @@
+tests/out/
+tests/*_test
+build/
+firmware/build/
+node_modules/
+*.o
