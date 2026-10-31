@@ -5,3 +5,4 @@ build/
 firmware/build/
 node_modules/
 *.o
+FM-4-webapp.zip
