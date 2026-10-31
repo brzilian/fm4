@@ -1,0 +1,217 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>FM-4 Editor</title>
+<meta name="description" content="Firmware installer, TQ5 voice editor and voice library for the FM-4 firmware on the M-VAVE FM-1.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='2' fill='%23c3d26a'/%3E%3Cpath d='M3 12V4h4M3 8h3M9 12V4l4 8V4' stroke='%2327310f' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+<!-- fm1_open's updater and its English message table (classic scripts that set globalThis.FM1Web / FM1I18n) -->
+<script src="vendor/fm1_open/WebUpdate.js"></script>
+<script src="vendor/fm1_open/I18n.js"></script>
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="panel" aria-label="FM-4">
+  <div class="panel-inner">
+    <div class="mark" aria-hidden="true"><span class="mark-fm">FM</span><span class="mark-4">4</span></div>
+    <p class="mark-sub">4-operator FM tone generator<br>for the FM-1</p>
+    <div class="lcd-bezel"><svg id="lcd" class="lcd"></svg></div>
+    <nav class="keys" role="tablist" aria-label="Sections">
+      <button role="tab" id="tab-editor" aria-controls="view-editor" aria-selected="true" class="key"><span class="led"></span>Edit</button>
+      <button role="tab" id="tab-library" aria-controls="view-library" aria-selected="false" class="key" tabindex="-1"><span class="led"></span>Library</button>
+      <button role="tab" id="tab-install" aria-controls="view-install" aria-selected="false" class="key" tabindex="-1"><span class="led"></span>Install</button>
+    </nav>
+  </div>
+</header>
+
+<!-- MIDI status bar -->
+<section class="statusbar" aria-label="MIDI connection">
+  <button id="midi-connect" class="btn">Connect MIDI</button>
+  <label class="field">In <select id="midi-in" disabled><option value="">None</option></select></label>
+  <label class="field">Out <select id="midi-out" disabled><option value="">None</option></select></label>
+  <p id="midi-identity" class="identity" aria-live="polite">MIDI not connected</p>
+  <span id="midi-activity" class="activity" aria-hidden="true"></span>
+</section>
+
+<main id="main">
+
+<!-- ===================================================================== EDITOR -->
+<section id="view-editor" role="tabpanel" aria-labelledby="tab-editor" class="view">
+  <div class="toolbar">
+    <label class="field">Part <select id="ed-part"></select></label>
+    <label class="field">MIDI channel <select id="ed-channel"></select></label>
+    <label class="field name">Voice name <input id="ed-name" maxlength="10" spellcheck="false" autocomplete="off"></label>
+    <span class="grow"></span>
+    <button id="ed-undo" class="btn" disabled title="Undo (Ctrl+Z)">Undo</button>
+    <button id="ed-redo" class="btn" disabled title="Redo (Ctrl+Shift+Z)">Redo</button>
+    <button id="ed-init" class="btn">Init voice</button>
+    <button id="ed-random" class="btn">Randomize</button>
+    <button id="ed-get" class="btn">Get voice from device</button>
+    <button id="ed-send" class="btn">Send voice</button>
+    <label class="check" title="Send every edit to the FM-4 as a parameter change"><input type="checkbox" id="ed-live" checked> Send edits live</label>
+  </div>
+  <p id="ed-status" class="note" aria-live="polite"></p>
+
+  <div class="ed-grid">
+    <fieldset class="group algo-group">
+      <legend>Algorithm</legend>
+      <div id="ed-algo-picks" class="algo-picks" role="radiogroup" aria-label="Algorithm"></div>
+      <svg id="ed-algo" class="algo" viewBox="0 0 220 200" role="img" aria-label="Algorithm diagram"></svg>
+      <div id="ed-common" class="ctl-list"></div>
+    </fieldset>
+    <div id="ed-ops" class="ops"></div>
+    <fieldset class="group"><legend>LFO</legend><div id="ed-lfo" class="ctl-list"></div></fieldset>
+    <fieldset class="group"><legend>Pitch and performance</legend><div id="ed-perf" class="ctl-list"></div></fieldset>
+    <fieldset class="group"><legend>Controllers</legend><div id="ed-ctrl" class="ctl-list"></div></fieldset>
+    <fieldset class="group"><legend>Effect</legend><div id="ed-fx" class="ctl-list"></div>
+      <p class="note">The FM-4 has one effect. It follows the voice of part 1.</p></fieldset>
+  </div>
+
+  <fieldset class="group kbd-group">
+    <legend>Audition</legend>
+    <div class="kbd-bar">
+      <button id="kb-down" class="btn small" aria-label="Octave down">Oct −</button>
+      <output id="kb-oct" aria-live="polite">C3</output>
+      <button id="kb-up" class="btn small" aria-label="Octave up">Oct +</button>
+      <label class="field">Velocity <input id="kb-vel" type="range" min="1" max="127" value="100"></label>
+      <button id="kb-panic" class="btn small">All notes off</button>
+      <p class="note kbd-hint">Computer keys: Z–M and Q–U play two octaves. MIDI input plays too.</p>
+      <meter id="kb-meter" min="0" max="1" value="0" aria-label="Output level"></meter>
+    </div>
+    <div id="kb" class="kbd" aria-label="Keyboard"></div>
+  </fieldset>
+</section>
+
+<!-- ===================================================================== LIBRARY -->
+<section id="view-library" role="tabpanel" aria-labelledby="tab-library" class="view" hidden>
+  <div class="toolbar">
+    <label class="btn file">Load .syx files<input id="lib-file" type="file" accept=".syx,application/octet-stream" multiple></label>
+    <button id="lib-presets" class="btn">Load FM-4 presets</button>
+    <span class="grow"></span>
+    <button id="lib-send-one" class="btn" disabled>Send voice to device</button>
+    <button id="lib-read" class="btn">Receive user bank</button>
+    <button id="lib-write" class="btn">Write user bank to device</button>
+    <button id="lib-stop" class="btn" hidden>Stop</button>
+  </div>
+  <p id="lib-status" class="note" aria-live="polite"></p>
+  <progress id="lib-progress" max="100" hidden></progress>
+  <ul id="lib-warnings" class="warnings" aria-live="polite"></ul>
+
+  <div class="lib-grid">
+    <fieldset class="group">
+      <legend>Loaded files</legend>
+      <div id="lib-sources" class="sources"><p class="empty">Drop .syx files here, or press Load .syx files. TQ5, TX81Z, DX11, DX21, DX27 and DX100 banks and single voices are read.</p></div>
+    </fieldset>
+    <fieldset class="group">
+      <legend>User bank (100 voices)</legend>
+      <div class="toolbar tight">
+        <button id="lib-to-editor" class="btn small" disabled>Edit selected</button>
+        <button id="lib-from-editor" class="btn small" disabled>Store editor voice here</button>
+        <button id="lib-clear" class="btn small" disabled>Clear slot</button>
+        <span class="grow"></span>
+        <button id="lib-export100" class="btn small">Export 100-voice .syx</button>
+        <label class="field small">VMEM <select id="lib-chunk"><option value="0">1–32</option><option value="1">33–64</option><option value="2">65–96</option><option value="3">97–100</option></select></label>
+        <button id="lib-export32" class="btn small">Export 32-voice .syx</button>
+      </div>
+      <p class="note">Drag voices onto slots, or select a voice and press Enter on a slot. Alt+arrow keys move the selected slot.</p>
+      <ol id="lib-bank" class="bank"></ol>
+    </fieldset>
+  </div>
+</section>
+
+<!-- ===================================================================== INSTALL -->
+<section id="view-install" role="tabpanel" aria-labelledby="tab-install" class="view" hidden>
+  <div class="install">
+    <fieldset class="group">
+      <legend>Before you start</legend>
+      <ul class="plain">
+        <li>Use desktop Chrome or Edge.</li>
+        <li>Use a USB data cable straight into the computer, with no hub.</li>
+        <li>Close other MIDI apps, DAWs and editor tabs. This page also releases its own editor ports while writing.</li>
+        <li>Make sure the FM-1 is charged or powered.</li>
+        <li>Keep the official V15 recovery path in mind: resume in this page, then <a href="https://github.com/Quixotic7/MvaveFM1Unbricker" rel="noopener">the Unbricker</a>, then the Transporter dongle.</li>
+      </ul>
+    </fieldset>
+
+    <fieldset class="group">
+      <legend>Firmware</legend>
+      <p id="inst-pkg" class="pkg" aria-live="polite">Checking the firmware package…</p>
+      <div class="modes" role="radiogroup" aria-label="What to install">
+        <label class="check"><input type="radio" name="inst-mode" id="inst-mode-fm4" checked> Install FM-4</label>
+        <label class="check"><input type="radio" name="inst-mode" id="inst-mode-stock"> Restore stock V15 <span id="inst-stock-info" class="note"></span></label>
+      </div>
+    </fieldset>
+
+    <fieldset class="group step">
+      <legend>1. Connect</legend>
+      <button id="inst-connect" class="btn" disabled>Connect</button>
+      <p id="inst-device" class="device" aria-live="polite">Not connected</p>
+    </fieldset>
+
+    <fieldset class="group step" id="inst-backup" hidden>
+      <legend>2. Back up</legend>
+      <p id="inst-backup-text"></p>
+      <button id="inst-backup-run" class="btn" hidden>Back up and verify</button>
+      <div id="inst-ack-box" hidden>
+        <p>Recommended before your first custom install: switch the FM-1 to UBOOT and make a full-flash dump with <a href="https://github.com/Quixotic7/MvaveFM1Unbricker" rel="noopener">MvaveFM1Unbricker</a> (<code>softkey</code>, then <code>backup</code>; Windows or Linux).</p>
+        <label class="check"><input type="checkbox" id="inst-ack"> I made a full-flash dump with MvaveFM1Unbricker, or I accept losing the stock settings and user patches.</label>
+      </div>
+      <div id="inst-have-box" hidden>
+        <label class="check"><input type="checkbox" id="inst-have"> I already saved a backup before the interrupted update.</label>
+      </div>
+      <p id="inst-backup-status" class="note" aria-live="polite"></p>
+    </fieldset>
+
+    <fieldset class="group step">
+      <legend>3. Install</legend>
+      <button id="inst-install" class="btn danger" disabled>Install FM-4…</button>
+      <progress id="inst-progress" max="100" hidden></progress>
+      <p id="inst-phase" class="phase" aria-live="polite"></p>
+      <p class="note">While writing: do not unplug, do not close this page, do not let the FM-1 power off. It restarts twice.</p>
+    </fieldset>
+
+    <div id="inst-error" class="error" role="alert" hidden>
+      <p id="inst-error-title" class="error-title"></p>
+      <p id="inst-error-detail" class="error-detail"></p>
+      <p id="inst-error-recovery"></p>
+    </div>
+
+    <details class="log"><summary>Connection log</summary><pre id="inst-log"></pre></details>
+
+    <!-- Hook for a device settings panel (system, multi setup). Mount it with FM4App.mountDevicePanel(fn). -->
+    <section id="device-panel-hook" class="device-panel" aria-label="Device" hidden></section>
+  </div>
+
+  <dialog id="inst-confirm" aria-labelledby="inst-confirm-heading">
+    <h2 id="inst-confirm-heading">Replace the firmware?</h2>
+    <dl class="confirm-dl">
+      <dt>Device</dt><dd id="inst-confirm-from"></dd>
+      <dt>Installs</dt><dd id="inst-confirm-to"></dd>
+    </dl>
+    <ul class="plain warn">
+      <li>Do not unplug, close this page or let the battery run down until it says Done.</li>
+      <li>There is no automatic rollback. An interruption while writing can need the <a href="https://github.com/Quixotic7/MvaveFM1Unbricker" rel="noopener">Unbricker</a> or the Transporter to recover.</li>
+      <li>Switching firmware can leave old data behind that corrupts presets.</li>
+    </ul>
+    <label id="inst-confirm-typed-box" class="field typed">Type INSTALL to continue <input id="inst-confirm-typed" autocomplete="off" spellcheck="false"></label>
+    <div class="dialog-buttons">
+      <button id="inst-confirm-cancel" class="btn">Cancel</button>
+      <button id="inst-confirm-go" class="btn danger">Write firmware</button>
+    </div>
+  </dialog>
+</section>
+
+</main>
+
+<footer class="foot">
+  <p>FM-4 webapp, GPL-3.0-only. <a href="https://github.com/brzilian/fm4">Source code</a>. Not affiliated with or endorsed by M-VAVE or Yamaha; product names only identify compatible formats.</p>
+  <p>Firmware updater and voice library protocol from <a href="https://github.com/m-vave/fm1_open">fm1_open</a> by M-VAVE (GPL-3.0-only WITH GPL-3.0-linking-exception; <a href="vendor/fm1_open/LICENSE.md">licence</a>, <a href="vendor/fm1_open/THIRD_PARTY.md">third-party notices</a>). Package format via kagaimiq's jl-misctools (MIT). Felucca backup (<code>fm1backup.js</code>) and the installer pattern from Felucca and ORBIT by Leo Kuroshita, Hügelton Instruments (GPL-3.0-only). Stock V15 recovery image and vendor loader: M-VAVE, Apache-2.0 (see the third-party notices).</p>
+</footer>
+</body>
+</html>

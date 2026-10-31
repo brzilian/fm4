@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "available": false,
+  "stock": {
+    "schema": 1,
+    "kind": "stock",
+    "product": "FM-1_015",
+    "profile": "M-VAVE Original V15",
+    "family": 7,
+    "release_version": "V15",
+    "build_id": "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a",
+    "sha256": "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a",
+    "bytes": 699956,
+    "loader_sha256": "ef1f2db89b011fa53e71df363f0122de0ea896618c53fb53e8da676322004541",
+    "url": "FM-1_015.fwsc"
+  }
+}
