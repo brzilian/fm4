@@ -1,7 +1,7 @@
 FM4 := ../firmware/app/fm4
 CFLAGS := -std=c99 -O2 -Wall -Wextra -Wno-unused-parameter -DFM4_HOST -I$(FM4)
 CORE := $(FM4)/fm4_core.c
-ENGINE := $(filter-out $(CORE) $(FM4)/fm4_main.c $(FM4)/fm4_ui.c,$(wildcard $(FM4)/*.c))
+ENGINE := $(filter-out $(CORE) $(FM4)/fm4_platform.c,$(wildcard $(FM4)/*.c))
 TESTS := engine_test seq_test fx_test multi_test tq5_test presets_test core_test ui_host
 
 all: $(TESTS)
