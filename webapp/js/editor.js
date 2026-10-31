@@ -275,8 +275,8 @@ export class Editor {
     this.refreshHistory();
   }
   showLcd(v) {
-    const top = `P${this.part + 1} ALG${v[V.ALG] + 1} ${voiceName(v)}`;
-    let bottom = "TQ5 VOICE EDIT";
+    const top = `P${this.part + 1} ${voiceName(v)}`;
+    let bottom = `ALG ${v[V.ALG] + 1}  CH ${this.channel + 1}`;
     if (this.lastLabel) {
       const val = this.lastOff >= 0 && this.lastOff !== V.NAME ? String(v[this.lastOff]) : "";
       bottom = `${this.lastLabel.slice(0, 15 - val.length)} ${val}`.trim();

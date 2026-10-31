@@ -140,12 +140,11 @@ select, input[type="text"], input:not([type]), input[type="number"] { font: 14px
 .algo .out { stroke: var(--carrier); stroke-width: 2; }
 .algo .outlabel { font: 11px var(--font-legend); fill: var(--ink-2); text-anchor: middle; }
 
-.ctl-list { display: grid; gap: 4px 10px; grid-template-columns: max-content 1fr 3.4em; align-items: center; }
-.ctl { display: contents; }
-.ctl label, .ctl .lbl { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
-.ctl output { font: 13px var(--font-ui); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
-.ctl select { grid-column: 2 / 4; min-height: 28px; padding: 2px 5px; font-size: 13px; }
-.ctl .toggles { grid-column: 2 / 4; display: flex; gap: 10px; }
+.ctl-list { display: grid; gap: 4px 10px; grid-template-columns: max-content minmax(0, 1fr) 4.6em; align-items: center; }
+.ctl-list > label, .ctl-list > .lbl { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+.ctl-list > output { font: 13px var(--font-ui); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); white-space: nowrap; }
+.ctl-list > select { grid-column: 2 / 4; min-height: 28px; padding: 2px 5px; font-size: 13px; min-width: 0; }
+.ctl-list > .toggles { grid-column: 2 / 4; display: flex; gap: 10px; }
 input[type="range"] { width: 100%; accent-color: var(--print); min-width: 60px; margin: 0; height: 22px; }
 
 .ops { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-content: start; }

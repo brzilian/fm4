@@ -109,6 +109,7 @@ export function classify(result, pkg) {
     return { kind: "resume", identity: id, force: false };
   }
   if (result.migration || result.legacy) {
+    if (/^ota-/i.test(id)) return { kind: "foreign", identity: id };
     if (id === "FM-1_015") return { kind: "stock", identity: id, force: true, migration: pkg.kind !== "stock" };
     if (FELUCCA_ID.test(id)) return { kind: "felucca", identity: id, force: true, migration: true };
     return { kind: "refuse", identity: id };
@@ -204,7 +205,8 @@ export function createInstaller(deps) {
   function refresh() {
     const p = pkg(), c = state.device, busy = state.busy;
     ui.connect.disabled = busy || !p;
-    for (const r of ui.modeInputs || []) r.disabled = busy || state.writing;
+    if (ui.modeFm4) ui.modeFm4.disabled = busy || state.writing || !state.pkgs.fm4;
+    if (ui.modeStock) ui.modeStock.disabled = busy || state.writing || !state.pkgs.stock;
     const needs = c && c.kind;
     ui.backupBox.hidden = !needs || !["fm4", "open", "felucca", "stock", "resume"].includes(needs);
     ui.backupRun.hidden = !["fm4", "open", "felucca"].includes(needs);
@@ -245,12 +247,12 @@ export function createInstaller(deps) {
       state.phase = "idle"; refresh(); return;
     }
     let meta = null;
+    const base = new URL(deps.metaUrl, deps.baseUrl);
     try {
-      const res = await deps.fetch(deps.metaUrl, { cache: "no-store" });
+      const res = await deps.fetch(base.href, { cache: "no-store" });
       if (!res.ok) throw new Error(`fm4.json: HTTP ${res.status}`);
       meta = await res.json();
     } catch (e) { state.metaError = e.message; }
-    const base = new URL(deps.metaUrl, deps.baseUrl);
     const resolve = (m) => m && typeof m.url === "string" ? { ...m, url: new URL(m.url, base).href } : m;
     state.meta = meta;
     if (meta && meta.product) {
