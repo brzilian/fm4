@@ -47,7 +47,7 @@ static FM4_AUDIO_CODE void release_track(seq_state *s, unsigned track)
     for (unsigned n = 0; n < 128; ++n)
         if (s->held[track][n >> 3] & (1U << (n & 7)))
             s->emit(s->ctx, track, part, (uint8_t)(0x80 | part), (uint8_t)n, 0);
-    memset(s->held[track], 0, sizeof s->held[track]);
+    fm4_zero(s->held[track], sizeof s->held[track]);
 }
 
 static FM4_AUDIO_CODE void release_all(seq_state *s)

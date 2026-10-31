@@ -19,6 +19,12 @@
 #define FM4_RATE 44100
 #define FM4_BLOCK 128
 
+/* Audio-safe byte fill/copy: libc lives in Flash, and the volatile pointer
+ * stops the compiler from turning these loops back into memset/memcpy. */
+static inline void fm4_zero(void *d, size_t n) { volatile uint8_t *p = (volatile uint8_t *)d; while (n--) *p++ = 0; }
+static inline void fm4_copy(void *d, const void *s, size_t n)
+{ volatile uint8_t *p = (volatile uint8_t *)d; const uint8_t *q = (const uint8_t *)s; while (n--) *p++ = *q++; }
+
 static inline int32_t fm4_clamp(int32_t v, int32_t lo, int32_t hi)
 {
     return v < lo ? lo : v > hi ? hi : v;

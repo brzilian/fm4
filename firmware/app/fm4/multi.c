@@ -215,7 +215,7 @@ FM4_AUDIO_CODE void multi_all_off(multi_state *m, int hard)
         m->slot_sustained[s] = 0;
     }
     for (unsigned p = 0; p < MULTI_PARTS; ++p) {
-        memset(m->part[p].held, 0, sizeof m->part[p].held);
+        fm4_zero(m->part[p].held, sizeof m->part[p].held);
         m->part[p].mono_count = 0; m->part[p].sustain_pedal = 0;
     }
 }
@@ -261,7 +261,7 @@ static FM4_AUDIO_CODE void controller(multi_state *m, unsigned p, unsigned cc, u
     case 123:
         for (unsigned s = 0; s < m->eng.voices; ++s)
             if (m->slot_part[s] == p) { m->slot_sustained[s] = 0; opz_key_off(&m->eng, s); }
-        pt->mono_count = 0; memset(pt->held, 0, sizeof pt->held);
+        pt->mono_count = 0; fm4_zero(pt->held, sizeof pt->held);
         break;
     default: break;
     }
