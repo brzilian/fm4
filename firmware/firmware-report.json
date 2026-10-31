@@ -1,6 +1,6 @@
 {
   "passed": true,
-  "elf_sha256": "ea52fa6c37d06c2965a8f35211dae880898ef01e5bc00398961f5b7036cfc762",
+  "elf_sha256": "c65d891cffccc569dd22a44e89031aa406ce6d7d9397269a88c979b11088ee4a",
   "allocated_image_bytes": 438460,
   "app_image_bytes": 438408,
   "startup_entry_verified": true,
