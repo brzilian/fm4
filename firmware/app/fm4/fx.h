@@ -20,6 +20,9 @@ enum fx_algo {
     FX_ALGO_DIST,
     FX_ALGO_DIST_REVERB,
     FX_ALGO_DIST_DELAY,
+    FX_ALGO_DELAY_LR,    /* one repeat per side, different times */
+    FX_ALGO_GATE,        /* gated reverb: flat dense tail cut at gate time */
+    FX_ALGO_REVERSE,     /* reverse gate: rising dense tail */
     FX_ALGOS
 };
 

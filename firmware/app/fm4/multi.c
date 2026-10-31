@@ -61,6 +61,8 @@ static FM4_AUDIO_CODE void part_mod(multi_state *m, unsigned p)
     const multi_perf *f = &pt->data.perf;
     unsigned pm = (f->mw_pitch * pt->modwheel) / 99U + (f->bc_pitch * pt->breath) / 99U;
     unsigned am = (f->mw_amp * pt->modwheel) / 99U + (f->bc_amp * pt->breath) / 99U;
+    pm += (f->at_pitch * pt->aftertouch) / 99U;
+    am += (f->at_amp * pt->aftertouch) / 99U;
     if (f->fc_pitch) pm += (f->fc_pitch * pt->foot) / 99U;
     if (f->fc_amp) am += (f->fc_amp * pt->foot) / 99U;
     opz_lfo_extra(&m->eng, p, pm, am);
@@ -253,7 +255,7 @@ static FM4_AUDIO_CODE void controller(multi_state *m, unsigned p, unsigned cc, u
         for (unsigned s = 0; s < m->eng.voices; ++s) if (m->slot_part[s] == p) opz_kill(&m->eng, s);
         break;
     case 121:
-        pt->bend = 0; pt->modwheel = 0; pt->breath = 0; pt->expression = 127; pt->sustain_pedal = 0;
+        pt->bend = 0; pt->modwheel = 0; pt->breath = 0; pt->aftertouch = 0; pt->expression = 127; pt->sustain_pedal = 0;
         part_mod(m, p); refresh_part(m, p);
         break;
     case 123:
@@ -278,7 +280,7 @@ FM4_AUDIO_CODE void multi_midi(multi_state *m, const uint8_t *msg, unsigned len)
         case 0x80: note_off(m, p, d1); break;
         case 0xb0: controller(m, p, d1, d2); break;
         case 0xe0: m->part[p].bend = (int16_t)(((int)(d2 << 7 | d1)) - 8192); refresh_part(m, p); break;
-        case 0xd0: m->part[p].breath = (uint8_t)d1; part_mod(m, p); break; /* aftertouch acts like BC */
+        case 0xd0: m->part[p].aftertouch = (uint8_t)d1; part_mod(m, p); break;
         default: break;
         }
     }

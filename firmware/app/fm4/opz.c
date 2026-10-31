@@ -137,25 +137,22 @@ FM4_AUDIO_CODE void opz_key_on(opz_engine *e, unsigned slot, const opz_patch *p,
         opz_op *o = &v->o[i];
         unsigned mul = crs_map[q->crs & 63][0];
         op_dt2[slot][i] = crs_map[q->crs & 63][1];
-        o->multiple = (uint8_t)((mul ? (mul << 4) : 8U) | (q->fine & 15));
+        unsigned fine = q->fine & 15;
+        if ((q->crs & 63) < 4 && fine > 7) fine = 7;   /* TX81Z: FINE 0-7 when CRS < 4 */
+        o->multiple = (uint8_t)(mul ? ((mul << 4) | fine) : (8U + fine));
         o->fixed = q->fixed ? 1 : 0;
-        if (o->fixed) {
-            unsigned hz = ((unsigned)(q->crs >> 2) << 4) | (q->fine & 15);
-            if (!hz) hz = 8;
-            hz <<= (q->fixrg & 7);
-            o->fixed_inc = hz * 97392U; /* 2^32 / 44100 */
-        }
+        if (o->fixed) o->fixed_inc = opz_fixed_hz(q->crs, q->fixrg, q->fine) * 97392U; /* 2^32/44100 */
         int d = (int)q->det - 3;
         o->det1 = (uint8_t)(d < 0 ? (4 | (unsigned)(-d)) : (unsigned)d);
         o->wave = q->wave & 7;
         o->ame = q->ame ? 1 : 0;
-        o->shift = q->shft & 3;
+        o->shift = i == 3 ? 0 : (q->shft & 3);  /* OP1 has no EG shift on TX81Z/TQ5 */
         /* Total level: output level + velocity + keyboard level scaling. */
         unsigned out = q->out > 99 ? 99 : q->out;
         unsigned tl = out >= 20 ? 99U - out : out_low[out];
         unsigned att = tl << 3;
         att += ((unsigned)(q->kvs & 7) * (127U - velocity) * 3U) >> 3;
-        if (note > 36) att += ((unsigned)q->ls * (note - 36U) * 11U) >> 7;
+        if (note > 24) att += ((unsigned)q->ls * (note - 24U)) >> 3;  /* LS*(key-24)/64 TL steps */
         if (!q->on) att = 0x3ff;
         o->tl = (uint16_t)(att > 0x3ff ? 0x3ff : att);
         unsigned d1l = 15U - (q->d1l & 15);
@@ -219,7 +216,7 @@ FM4_AUDIO_CODE int opz_voice_busy(const opz_engine *e, unsigned slot)
 static FM4_AUDIO_CODE uint8_t lfo_rate_reg(unsigned speed)
 {
     if (speed > 99) speed = 99;
-    return (uint8_t)((speed * 255U + 49U) / 99U);
+    return (uint8_t)(0x30U + (speed * (0xFFU - 0x30U) + 49U) / 99U);
 }
 
 FM4_AUDIO_CODE void opz_lfo_setup(opz_engine *e, unsigned part, const opz_patch *p)
@@ -389,13 +386,14 @@ unsigned opz_ratio_x100(unsigned crs, unsigned fine)
 {
     static const uint16_t dt2_x1000[4] = { 1000, 1414, 1569, 1730 };
     unsigned mul = crs_map[crs & 63][0], dt2 = crs_map[crs & 63][1];
+    if ((crs & 63) < 4 && (fine & 15) > 7) fine = 7;
     unsigned m16 = (mul ? mul << 4 : 8U) + (fine & 15);
     return (m16 * dt2_x1000[dt2] + 80U) / 160U;
 }
 
 unsigned opz_fixed_hz(unsigned crs, unsigned fixrg, unsigned fine)
 {
-    unsigned hz = ((crs >> 2) << 4) | (fine & 15);
-    if (!hz) hz = 8;
-    return hz << (fixrg & 7);
+    unsigned base = (crs & 63) < 4 ? 8U + ((fine & 15) > 7 ? 7U : (fine & 15))
+                                    : 16U * ((crs & 63) >> 2) + (fine & 15);
+    return base << (fixrg & 7);
 }

@@ -75,6 +75,8 @@ int main(int argc, char **argv)
     CHECK(opz_ratio_x100(63, 0) == 2597 || opz_ratio_x100(63, 0) == 2595, "crs63 %u", opz_ratio_x100(63, 0));
     CHECK(opz_fixed_hz(0, 0, 0) == 8, "fixed min");
     CHECK(opz_fixed_hz(63, 7, 15) == 255 << 7, "fixed max");
+    CHECK(opz_fixed_hz(0, 0, 7) == 15 && opz_fixed_hz(3, 1, 15) == 30, "fixed low CRS");
+    CHECK(opz_ratio_x100(0, 15) >= 93 && opz_ratio_x100(0, 15) <= 94, "crs0 fine clamp %u", opz_ratio_x100(0, 15));
 
     /* 2. Fixed frequency op. */
     opz_init(&e, 8);

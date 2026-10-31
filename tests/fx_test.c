@@ -10,7 +10,7 @@ static fx_unit fx;
 
 int main(void)
 {
-    static const char *names[FX_ALGOS] = { "off", "reverb", "delay", "pingpong", "chorus", "dist", "dist+rev", "dist+dly" };
+    static const char *names[FX_ALGOS] = { "off", "reverb", "delay", "pingpong", "chorus", "dist", "dist+rev", "dist+dly", "delayLR", "gate", "reverse" };
     for (unsigned a = 1; a < FX_ALGOS; ++a) {
         fx_init(&fx);
         fx_params p = { (uint8_t)a, 99, 99, 99 };

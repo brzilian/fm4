@@ -19,6 +19,7 @@ typedef struct {
     uint8_t mw_pitch, mw_amp; /* 0..99 */
     uint8_t bc_pitch, bc_amp, bc_pbias, bc_ebias;
     uint8_t fc_volume, fc_pitch, fc_amp;
+    uint8_t at_pitch, at_amp;      /* aftertouch (ACED2) */
     uint8_t transpose;     /* 0..48, 24 = no shift */
 } multi_perf;
 
@@ -26,7 +27,7 @@ typedef struct {
     opz_patch patch;
     multi_perf perf;
     uint8_t effect[3];     /* EFEDS travelling with this voice */
-    char name[10];
+    char name[11];
 } multi_voice_data;
 
 typedef struct {
@@ -47,7 +48,7 @@ typedef struct {
     multi_voice_data data;           /* current (edit buffer) voice */
     multi_part_cfg cfg;
     int16_t bend;                    /* -8192..8191 */
-    uint8_t modwheel, breath, foot, sustain_pedal, expression, cc_volume;
+    uint8_t modwheel, breath, foot, aftertouch, sustain_pedal, expression, cc_volume;
     uint8_t held[16];                /* keys physically down */
     uint8_t sustained[16];           /* released under sustain */
     uint8_t mono_stack[8], mono_count;

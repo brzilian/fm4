@@ -27,7 +27,7 @@ void fx_set(fx_unit *f, const fx_params *p)
     /* delay 10..(FX_DELAY_SAMPLES-1) samples */
     f->delay_len = 441 + (int32_t)((FX_DELAY_SAMPLES - 500) * t / 99U);
     f->feedback = (int32_t)(c * 26000U / 99U);           /* Q15 up to ~0.8 */
-    f->rv_feedback = 22900 + (int32_t)(t * 9000U / 99U); /* Q15 0.70..0.97 */
+    f->rv_feedback = 21000 + (int32_t)(t * 9000U / 99U) + (int32_t)(c * 1800U / 99U); /* Q15 */
     if (f->rv_feedback > 31800) f->rv_feedback = 31800;
     f->wet = (int32_t)((p->balance > 99 ? 99 : p->balance) * 32767U / 99U);
     f->drive = 1 + (int32_t)(c * 15U / 99U);
@@ -130,6 +130,28 @@ FM4_AUDIO_CODE void fx_render(fx_unit *f, const int32_t *send, int32_t *mix)
                 int32_t y = a + (((b - a) * (int32_t)(fr >> 2)) >> 14);
                 if (k) or_ = y; else ol = y;
             }
+            break;
+        }
+        case FX_ALGO_DELAY_LR: {
+            f->dl[f->dpos & mask] = (int16_t)((l + r) >> 1);
+            ol = f->dl[(f->dpos - (uint32_t)f->delay_len) & mask];
+            or_ = f->dl[(f->dpos - (uint32_t)(f->delay_len * 2 / 3)) & mask];
+            break;
+        }
+        case FX_ALGO_GATE:
+        case FX_ALGO_REVERSE: {
+            /* 12 taps spread over the gate time; flat (gate) or rising (reverse)
+             * gains, alternated between the sides, then lightly diffused. */
+            f->dl[f->dpos & mask] = (int16_t)((l + r) >> 1);
+            int32_t accl = 0, accr = 0;
+            for (unsigned k = 1; k <= 12; ++k) {
+                uint32_t d = (uint32_t)(f->delay_len * (int32_t)k / 12) + k * 37U;
+                int32_t g = algo == FX_ALGO_GATE ? 2600 : (int32_t)(k * 420U);
+                int32_t x = (f->dl[(f->dpos - d) & mask] * g) >> 15;
+                if (k & 1) accl += x; else accr += x;
+            }
+            int32_t rl, rr; reverb(f, (accl + accr) >> 2, &rl, &rr);
+            ol = accl + (rl >> 1); or_ = accr + (rr >> 1);
             break;
         }
         default: break;
