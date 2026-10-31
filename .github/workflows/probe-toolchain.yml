@@ -1,0 +1,29 @@
+name: probe-toolchain
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/probe-toolchain.yml']
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - name: Download JieLi toolchain 2.5.3
+        shell: pwsh
+        run: |
+          curl.exe -fL --retry 3 -o jl253.exe https://jl-update.oss-cn-shenzhen.aliyuncs.com/2.5.3.exe
+          Get-Item jl253.exe | Format-List Name,Length
+          (Get-FileHash jl253.exe -Algorithm SHA256).Hash
+      - name: Inspect installer
+        shell: pwsh
+        run: |
+          & 7z l jl253.exe | Select-Object -First 80 | Out-String | Write-Host
+          & 7z l jl253.exe > listing.txt
+          Select-String -Path listing.txt -Pattern 'clang.exe|pi32v2-ld|LLVMgold|llvm-nm|llvm-objcopy' | Out-String | Write-Host
+          $sig = [IO.File]::ReadAllBytes('jl253.exe')[0..4096]
+          $text = [Text.Encoding]::ASCII.GetString($sig)
+          if ($text -match 'Inno') { 'Inno Setup' } elseif ($text -match 'Nullsoft') { 'NSIS' } else { 'unknown header' }
+          strings64 2>$null | Out-Null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: toolchain-listing
+          path: listing.txt
