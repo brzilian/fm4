@@ -9,7 +9,7 @@ export const ACTION = Object.freeze({ NONE: 0, ERROR: 1, VOICE_EDIT: 2, VMEM_BLO
   MULTI_PARAM: 6, SYS_PARAM: 7, BLOCK_SELECT: 8, MASTER_TUNE: 9 });
 export const CHANGED = Object.freeze({ VCED: 1, ACED: 2, ACED2: 4, EFEDS: 8 });
 export const REQUEST = Object.freeze({ VCED: 0, VMEM: 1, ACED: 2, ACED2: 3, EFEDS: 4, EFEDS_ONLY: 5 });
-const IO_SIZE = 8192;
+const IO_SIZE = 8200;
 
 export class Codec {
   static async create(bytes, polyphony = 8) {

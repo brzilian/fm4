@@ -13,7 +13,7 @@ static fx_unit g_fx;
 static tq5_voice g_edit[MULTI_PARTS];
 static int32_t g_dry[FM4_BLOCK * 2], g_send[FM4_BLOCK * 2];
 static float g_out[FM4_BLOCK * 2];
-static uint8_t g_io[8192];          /* shared byte buffer for SysEx in/out */
+static uint8_t g_io[8192 + 16];     /* SysEx in/out; fm4_vmem_bulk uses [0,4104) + [4104,8200) */
 static tq5_result g_last;
 
 /* freestanding libc pieces the engine needs */
