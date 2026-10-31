@@ -14,7 +14,7 @@
 #define SEQ_TRACKS 8
 #define SEQ_SONGS 8
 #define SEQ_PPQ 96
-#define SEQ_MAX_EVENTS 6144
+#define SEQ_MAX_EVENTS 4096   /* per song (~2000 notes); 8 songs in Flash */
 #define SEQ_REC_EVENTS 1024
 
 typedef struct {

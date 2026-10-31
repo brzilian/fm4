@@ -3,12 +3,14 @@
 #include "fm1_gpio.h"
 #include "fm1_engine_control.h"
 #include "audio_output.h"
+#include "fm4/fm4_core.h"
 #include <string.h>
 
 #define DMA_ALIGNED __attribute__((aligned(32)))
 static int32_t receive[2][FM1_BLOCK_WORDS] DMA_ALIGNED;
 static int32_t transmit[2][FM1_BLOCK_WORDS] DMA_ALIGNED;
 static int32_t rendered[FM1_BLOCK_WORDS] DMA_ALIGNED;
+static int32_t fm4_block[FM1_BLOCK_WORDS] DMA_ALIGNED;
 static struct fm1_audio_stats statistics;
 static uint32_t block_ticks, previous_tick;
 static uint8_t initialized, previous_valid;
@@ -44,6 +46,11 @@ FM1_AUDIO_CODE __attribute__((interrupt(""))) void fm1_audio_irq(void)
         ++statistics.overruns;
         return;
     }
+    /* FM-4: the stock groove instrument is idle (all tracks OFF) but still
+     * rendered, which keeps the SDK's audio code linked and its timing
+     * statistics valid. FM-4's TQ5 engine is added on top. */
+    fm4_core_render(fm4_block);
+    for (unsigned i = 0; i < FM1_BLOCK_WORDS; ++i) rendered[i] += fm4_block[i];
     fm1_output_mix(rendered);
     uint32_t flags = fm1_audio_irq_save();
     if (fm1_audio_half_owned(half) &&

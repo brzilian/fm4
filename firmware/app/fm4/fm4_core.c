@@ -15,7 +15,7 @@
 #define OFF_SYSTEM   0x00000U
 #define OFF_VOICES   0x01000U          /* 4 sectors */
 #define OFF_SONGS    0x05000U
-#define SONG_STRIDE  0x0D000U          /* 13 sectors per song */
+#define SONG_STRIDE  0x09000U          /* 9 sectors per song */
 #define MAGIC_SYSTEM 0x53344D46U       /* "FM4S" */
 #define MAGIC_VOICES 0x56344D46U       /* "FM4V" */
 #define MAGIC_SONG   0x47344D46U       /* "FM4G" */
@@ -55,9 +55,10 @@ static volatile uint8_t clock_pulses, clock_cmd;
 #define SX_MAX 1024
 static struct { volatile uint16_t len; uint8_t data[SX_MAX]; } sx_in[SX_SLOTS];
 static uint8_t sx_head, sx_tail;
+static uint8_t bank_dump_block;            /* 1..4 = next VMEM block to send */
 
 /* MIDI output queue (control task) */
-#define OUT_BYTES 16896
+#define OUT_BYTES 4608
 static uint8_t out_buf[OUT_BYTES];
 static unsigned out_len, out_pos, out_slice;
 
@@ -131,29 +132,15 @@ void fm4_select(unsigned part, unsigned bank, unsigned program)
     stage_voice(part);
 }
 
-static int flash_write_region(uint32_t off, const void *data, size_t n)
-{
-    uint32_t end = off + (uint32_t)n;
-    if (end > fm4_hw_flash_size()) return -1;
-    for (uint32_t s = off & ~(SECTOR - 1); s < end; s += SECTOR)
-        if (fm4_hw_flash_erase(s)) return -2;
-    return fm4_hw_flash_write(off, data, n) ? -3 : 0;
-}
-
 static int save_record(uint32_t off, uint32_t magic, const void *data, size_t n)
 {
-    static uint8_t buf[SECTOR * 4];
+    /* erase, write body, then the header last so a torn write never validates */
     rec_header h = { magic, 1, (uint32_t)n, crc32(data, n) };
-    if (sizeof h + n <= sizeof buf) {
-        memcpy(buf, &h, sizeof h); memcpy(buf + sizeof h, data, n);
-        return flash_write_region(off, buf, sizeof h + n);
-    }
-    /* large records (songs): header and body in one erase pass */
     uint32_t end = off + (uint32_t)(sizeof h + n);
     if (end > fm4_hw_flash_size()) return -1;
-    for (uint32_t s = off; s < end; s += SECTOR) if (fm4_hw_flash_erase(s)) return -2;
-    if (fm4_hw_flash_write(off, &h, sizeof h)) return -3;
-    return fm4_hw_flash_write(off + sizeof h, data, n) ? -3 : 0;
+    for (uint32_t s = off & ~(SECTOR - 1); s < end; s += SECTOR) if (fm4_hw_flash_erase(s)) return -2;
+    if (fm4_hw_flash_write(off + sizeof h, data, n)) return -3;
+    return fm4_hw_flash_write(off, &h, sizeof h) ? -3 : 0;
 }
 
 static int load_record(uint32_t off, uint32_t magic, void *data, size_t n)
@@ -215,6 +202,13 @@ void fm4_apply_multi(void)
     staged[ST_CFG] = 1;
 }
 
+void fm4_apply_system(void)
+{
+    M.master_tune = (int8_t)(sys.master_tune - 64);
+    if (sys.polyphony < 4 || sys.polyphony > OPZ_MAX_VOICES) sys.polyphony = 8;
+    if (M.eng.voices != sys.polyphony) { staged[ST_PANIC] = 1; M.eng.voices = sys.polyphony; }
+}
+
 void fm4_set_mode(unsigned multi)
 {
     sys.mode = multi ? 1 : 0;
@@ -246,6 +240,13 @@ static FM4_AUDIO_CODE void seq_emit(void *ctx, unsigned track, unsigned part, ui
 }
 
 seq_state *fm4_seq(void) { return &seq; }
+static uint8_t record_part;
+void fm4_record(unsigned track)
+{
+    seq.ext_clock = sys.clock_ext;
+    record_part = (uint8_t)active_part;
+    seq_record(&seq, track & 7);
+}
 
 int fm4_song_load(unsigned n)
 {
@@ -273,7 +274,7 @@ void fm4_transport(unsigned action)
         else seq_stop(&seq);
         break;
     case 1: seq.ext_clock = sys.clock_ext; seq_play(&seq); break;
-    case 2: seq.ext_clock = sys.clock_ext; seq_record(&seq, active_part); break;
+    case 2: fm4_record(active_part); break;
     }
 }
 
@@ -486,13 +487,7 @@ static void handle_sysex(const uint8_t *m, size_t n)
     case TQ5_VOICE_EDIT: stage_voice(part); break;
     case TQ5_DUMP_REQUEST:
         if (r.request == TQ5_REQ_VMEM) {
-            static uint8_t recs[32][TQ5_VMEM], msg[4104 + 8];
-            for (unsigned b = 0; b < 4; ++b) {
-                uint8_t sel[7]; tq5_msg_param(sys.tx_channel, 0x24, 7, b + 1, sel); queue_out(sel, 7);
-                for (unsigned i = 0; i < 32; ++i) memcpy(recs[i], user_bank[25 * b + (i < 25 ? i : 0)], TQ5_VMEM);
-                size_t len = tq5_msg_vmem((const uint8_t (*)[TQ5_VMEM])recs, sys.tx_channel, msg);
-                queue_out(msg, len);
-            }
+            bank_dump_block = 1;              /* streamed block by block in poll */
         } else {
             uint8_t reply[200];
             size_t len = tq5_reply(&edit_buf[part], r.request, sys.tx_channel, reply, sizeof reply);
@@ -576,6 +571,25 @@ void fm4_core_poll(void)
         for (unsigned p = 0; p < FM4_PARTS; ++p) if (r & (1U << p)) stage_voice(p);
     }
     flush_out();
+    if (bank_dump_block && out_len == 0) {
+        static uint8_t recs[32][TQ5_VMEM];
+        unsigned b = bank_dump_block - 1;
+        uint8_t sel[7]; tq5_msg_param(sys.tx_channel, 0x24, 7, b + 1, sel); queue_out(sel, 7);
+        for (unsigned i = 0; i < 32; ++i) memcpy(recs[i], user_bank[25 * b + (i < 25 ? i : 0)], TQ5_VMEM);
+        out_len += (unsigned)tq5_msg_vmem((const uint8_t (*)[TQ5_VMEM])recs, sys.tx_channel, out_buf + out_len);
+        bank_dump_block = b + 1 < 4 ? (uint8_t)(b + 2) : 0;
+        flush_out();
+    }
+}
+
+void fm4_mark_dirty(void) { settings_dirty = 1; }
+void fm4_midi_out(const uint8_t *m, size_t n) { queue_out(m, n); flush_out(); }
+void fm4_core_tick(uint32_t now)
+{
+    static uint32_t dirty_since; static uint8_t was_dirty;
+    if (!settings_dirty) { was_dirty = 0; return; }
+    if (!was_dirty) { was_dirty = 1; dirty_since = now; return; }
+    if (now - dirty_since >= 2000U && seq.state == SEQ_STOPPED) { fm4_save_settings(); was_dirty = 0; }
 }
 
 unsigned fm4_voices_active(void) { return multi_active_voices(&M); }

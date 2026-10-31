@@ -107,10 +107,11 @@ FM4_AUDIO_CODE void fx_render(fx_unit *f, const int32_t *send, int32_t *mix)
             break;
         }
         case FX_ALGO_PINGPONG: {
-            uint32_t rd = (f->dpos - (uint32_t)f->delay_len) & mask;
-            int32_t yl = f->dl[rd], yr = f->dr[rd];
+            const uint32_t rmask = FX_DELAY_R_SAMPLES - 1;
+            uint32_t len = (uint32_t)f->delay_len > rmask ? rmask : (uint32_t)f->delay_len;
+            int32_t yl = f->dl[(f->dpos - len) & mask], yr = f->dr[(f->dpos - len) & rmask];
             f->dl[f->dpos & mask] = (int16_t)sat16(((l + r) >> 1) + ((yr * f->feedback) >> 15));
-            f->dr[f->dpos & mask] = (int16_t)sat16((yl * f->feedback) >> 15);
+            f->dr[f->dpos & rmask] = (int16_t)sat16((yl * f->feedback) >> 15);
             ol = yl; or_ = yr;
             break;
         }

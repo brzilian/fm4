@@ -71,13 +71,18 @@ void fm4_voice_get(unsigned bank, unsigned slot, tq5_voice *out);
 unsigned fm4_active_part(void);              /* part the panel plays/edits */
 void fm4_set_active_part(unsigned part);
 void fm4_set_mode(unsigned multi);
-void fm4_apply_multi(void);                  /* push fm4_multi() cfg to the engine */
+void fm4_apply_multi(void);
+void fm4_apply_system(void);                 /* master tune, polyphony */                  /* push fm4_multi() cfg to the engine */
 int fm4_save_settings(void);
+void fm4_mark_dirty(void);                   /* settings changed: saved ~2 s later */
+void fm4_core_tick(uint32_t now_ms);         /* control task: debounced saves */
+void fm4_midi_out(const uint8_t *msg, size_t n); /* control task */
 /* Songs */
 seq_state *fm4_seq(void);
 int fm4_song_load(unsigned song);
 int fm4_song_save(void);
-void fm4_transport(unsigned action);         /* 0 stop, 1 play, 2 record */
+void fm4_transport(unsigned action);         /* 0 stop, 1 play, 2 record active part's track */
+void fm4_record(unsigned track);             /* record onto a song track */
 /* Input from any context. */
 int fm4_post(const uint8_t *msg, unsigned n);        /* MIDI routing task */
 int fm4_post_local(const uint8_t *msg, unsigned n);  /* control task (panel) */

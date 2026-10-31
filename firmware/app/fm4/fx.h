@@ -9,6 +9,7 @@
 #ifndef FX_DELAY_SAMPLES
 #define FX_DELAY_SAMPLES 16384   /* per channel, ~371 ms */
 #endif
+#define FX_DELAY_R_SAMPLES 8192 /* right line: ping-pong only, ~186 ms */
 #define FX_REVERB_SAMPLES 8192
 
 enum fx_algo {
@@ -35,7 +36,7 @@ typedef struct {
 
 typedef struct {
     fx_params p;
-    int16_t dl[FX_DELAY_SAMPLES], dr[FX_DELAY_SAMPLES];
+    int16_t dl[FX_DELAY_SAMPLES], dr[FX_DELAY_R_SAMPLES];
     int16_t rv[FX_REVERB_SAMPLES];
     uint32_t dpos, rpos, lfo;
     int32_t lp[8], apos[8];

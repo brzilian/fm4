@@ -1,5 +1,6 @@
 tests/out/
 tests/*_test
+tests/ui_host
 build/
 firmware/build/
 node_modules/
