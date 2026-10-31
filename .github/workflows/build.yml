@@ -1,0 +1,64 @@
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Engine, sequencer, effects, multi, SysEx tests
+        run: make -C tests
+
+  firmware:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache JieLi toolchain
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: toolchain
+          key: jieli-2.5.3-399bd518
+      - name: Fetch JieLi Windows toolchain 2.5.3 (not redistributed)
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          curl.exe -fsSL --retry 3 -o jl253.exe https://jl-update.oss-cn-shenzhen.aliyuncs.com/2.5.3.exe
+          $h = (Get-FileHash jl253.exe -Algorithm SHA256).Hash
+          if ($h -ne '399BD518A28E47A7A0394506CEBD5BF658748A58CD6B7C02512E24B4B88C5A5E') { throw "toolchain hash $h" }
+          choco install innoextract -y --no-progress | Out-Null
+          innoextract -s -d inno jl253.exe
+          New-Item -ItemType Directory toolchain | Out-Null
+          Move-Item 'inno\C$\JL\pi32' toolchain\pi32
+      - name: Build firmware
+        shell: pwsh
+        run: |
+          function Note($t, $m) { $m = ($m | Out-String).Trim() -replace '%','%25' -replace "`r",'' -replace "`n",'%0A'; Write-Host "::notice title=$t::$m" }
+          $tc = (Resolve-Path toolchain\pi32).Path
+          $log = Join-Path $PWD 'build.log'
+          $ok = $true
+          try { & firmware\sdk\Build.ps1 -FirmwareOnly -Toolchain $tc *>&1 | Tee-Object -FilePath $log } catch { $ok = $false; $_ | Out-String | Add-Content $log }
+          $tail = Get-Content $log -Tail 60 | Out-String
+          Note 'build-log' $tail.Substring([Math]::Max(0, $tail.Length - 6000))
+          $pkg = Get-ChildItem firmware\build -Recurse -Filter *.fwsc -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (!$ok -or !$pkg) { throw 'firmware build failed' }
+          Note 'package' "$($pkg.FullName) $($pkg.Length) bytes $((Get-FileHash $pkg.FullName -Algorithm SHA256).Hash)"
+      - name: Publish package to the builds branch
+        shell: bash
+        run: |
+          set -e
+          sha=$(git rev-parse --short HEAD)
+          mkdir -p /tmp/out && cp firmware/build/dx7/generated/*.fwsc /tmp/out/FM-4-$sha.fwsc
+          for f in firmware/build/dx7/*.json; do cp "$f" /tmp/out/; done
+          git config user.name "fm4-ci"; git config user.email "fm4-ci@users.noreply.github.com"
+          git fetch origin builds:builds 2>/dev/null || true
+          git switch builds 2>/dev/null || git switch --orphan builds
+          git rm -rq . 2>/dev/null || true
+          mkdir -p firmware && cp /tmp/out/* firmware/ && cp firmware/FM-4-$sha.fwsc firmware/FM-4-latest.fwsc
+          git add firmware && git commit -qm "Firmware build $sha" && git push origin builds
