@@ -193,6 +193,12 @@ static void flush(void)
     }
 }
 
+#ifdef FM1_HOST_TEST
+/* Host tests: expose the current display list (used for Figma export). */
+unsigned fm4_ui_items(const void **list, unsigned *item_size)
+{ *list = items; *item_size = sizeof(item); return nitems; }
+#endif
+
 /* ---- Small formatting helpers ------------------------------------------ */
 static void fmt_uint(char *o, unsigned v, unsigned width)
 {

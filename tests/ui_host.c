@@ -71,8 +71,10 @@ static void step(int polls)
 }
 static void press(unsigned b) { ctl.buttons |= 1U << b; step(1); ctl.buttons &= ~(1U << b); step(1); }
 static void turn(unsigned enc, int d) { ctl.encoders[enc] = (int16_t)d; step(1); }
+static void dump_json(const char *name);
 static void shot(const char *name)
 {
+    now_ms += 1700; step(1);   /* let transient notices expire */
     char path[128]; snprintf(path, sizeof path, "out/ui_%s.ppm", name);
     FILE *f = fopen(path, "wb"); fprintf(f, "P6\n240 240\n255\n");
     for (int i = 0; i < 240 * 240; ++i) {
@@ -81,6 +83,24 @@ static void shot(const char *name)
         fwrite(rgb, 1, 3, f);
     }
     fclose(f);
+    dump_json(name);
+}
+/* mirror of screen.c's item struct */
+typedef struct { uint8_t op, scale; uint16_t fg, bg; uint8_t x, y, w, h; char s[22]; } ui_item;
+unsigned fm4_ui_items(const void **list, unsigned *item_size);
+static void dump_json(const char *name)
+{
+    const void *l; unsigned sz, n = fm4_ui_items(&l, &sz);
+    if (sz != sizeof(ui_item)) { printf("item size mismatch\n"); return; }
+    char path[128]; snprintf(path, sizeof path, "out/ui_%s.json", name);
+    FILE *f = fopen(path, "w"); fprintf(f, "[");
+    const ui_item *it = l;
+    for (unsigned i = 0; i < n; ++i) {
+        fprintf(f, "%s{\"op\":%u,\"x\":%u,\"y\":%u,\"w\":%u,\"h\":%u,\"fg\":%u,\"scale\":%u,\"s\":\"", i ? "," : "", it[i].op, it[i].x, it[i].y, it[i].w, it[i].h, it[i].fg, it[i].scale);
+        for (const char *c = it[i].s; *c; ++c) { if (*c == '"' || *c == '\\') fputc('\\', f); fputc(*c, f); }
+        fprintf(f, "\"}");
+    }
+    fprintf(f, "]\n"); fclose(f);
 }
 static unsigned lit(void) { unsigned n = 0; for (int i = 0; i < 240 * 240; ++i) n += lcd[i] != 0; return n; }
 
