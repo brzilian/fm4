@@ -11,8 +11,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Engine, sequencer, effects, multi, SysEx tests
+      - name: Engine, sequencer, effects, multi, SysEx, core and UI tests
         run: make -C tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Webapp tests (codec, .syx, installer against a simulated FM-1)
+        run: node --test webapp/tests/*.test.mjs
 
   firmware:
     runs-on: windows-latest

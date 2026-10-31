@@ -1,6 +1,15 @@
 {
   "schema": 1,
-  "available": false,
+  "product": "FM-1_8404100",
+  "profile": "dx7",
+  "family": 7,
+  "release_version": "V14",
+  "build_id": "a3ad548074dba690af8540645c012972c5e75e88b5b8b49c50a1d30c8b89a74c",
+  "sha256": "2209e89728bf4c912e5392ef4390b7fab1867ba09af01b8983ab4c172d0bb0fe",
+  "bytes": 479796,
+  "loader_sha256": "ef1f2db89b011fa53e71df363f0122de0ea896618c53fb53e8da676322004541",
+  "hardware_validated": false,
+  "url": "fm4.fwsc",
   "stock": {
     "schema": 1,
     "kind": "stock",
