@@ -258,7 +258,12 @@ static const char *notice;
 static char notice_buf[24];
 static uint8_t key_note[27];
 static int chord_used;
-static volatile unsigned keepalive_never;     /* see keep_sdk_alive() */
+static volatile unsigned keepalive_never;
+/* CPU meter (board/audio.c); the host harness provides stubs. */
+uint32_t fm4_audio_block_ticks(void);
+void fm4_audio_stats_reset_peak(void);
+static unsigned cpu_peak_pct, cpu_overruns;
+static uint32_t cpu_seen_overruns, cpu_at;     /* see keep_sdk_alive() */
 
 static fm4_system *S(void) { return fm4_sys(); }
 static unsigned part(void) { return fm4_active_part(); }
@@ -595,6 +600,9 @@ static void draw(void)
         text(16, 56, "FIRMWARE " FM4_VERSION, 1, DIM);
         text(16, 70, FM1_UPDATE_PRODUCT, 1, DIM);
         strcpy(s, "VOICES IN USE "); fmt_uint(s + strlen(s), fm4_voices_active(), 1); text(16, 100, s, 1, TEXT);
+        strcpy(s, "CPU PEAK "); fmt_uint(s + strlen(s), cpu_peak_pct, 1); strcat(s, "%"); text(16, 116, s, 1, cpu_peak_pct > 85 ? RED : cpu_peak_pct > 70 ? AMBER : GREEN);
+        strcpy(s, "OVERRUNS "); fmt_uint(s + strlen(s), cpu_overruns, 1); text(16, 132, s, 1, cpu_overruns ? RED : DIM);
+        fill(16, 146, 102, 8, PANEL); fill(17, 147, cpu_peak_pct > 100 ? 100 : cpu_peak_pct, 6, cpu_peak_pct > 85 ? RED : GREEN);
         break;
     case PG_SAVE: {
         text(16, 34, "STORE VOICE TO USER", 1, DIM);
@@ -916,6 +924,19 @@ void groove_screen_control(void)
     }
     prev_buttons = c.buttons; prev_keys = c.keys;
 
+    if (now - cpu_at >= 1000U) {
+        struct fm1_audio_stats st; fm1_audio_stats_read(&st);
+        uint32_t bt = fm4_audio_block_ticks();
+        cpu_peak_pct = bt ? (unsigned)((uint64_t)st.peak_ticks * 100U / bt) : 0;
+        fm4_audio_stats_reset_peak();
+        if (st.overruns != cpu_seen_overruns) {
+            cpu_overruns += st.overruns - cpu_seen_overruns;
+            cpu_seen_overruns = st.overruns;
+            /* CPU guard: shed polyphony instead of glitching */
+            if (S()->polyphony > 4) { --S()->polyphony; fm4_apply_system(); fm4_mark_dirty(); show("CPU GUARD: VOICES -1"); }
+        }
+        cpu_at = now;
+    }
     const char *n = fm4_notice();
     if (n) { show(n); changed = 1; }
     fm4_core_tick(now);

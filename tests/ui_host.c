@@ -118,3 +118,6 @@ int main(void)
     printf(failures ? "%d FAILURES\n" : "all ui tests passed\n", failures);
     return failures ? 1 : 0;
 }
+uint32_t fm4_audio_block_ticks(void) { return 1000; }
+void fm4_audio_stats_reset_peak(void) {}
+void fm1_audio_stats_read(struct fm1_audio_stats *s) { memset(s, 0, sizeof *s); s->peak_ticks = 420; }

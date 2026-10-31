@@ -117,6 +117,14 @@ int fm1_audio_start(void)
     initialized = 1;
     return 0;
 }
+/* FM-4: render-time budget for the CPU meter (timer ticks per block). */
+uint32_t fm4_audio_block_ticks(void) { return block_ticks; }
+void fm4_audio_stats_reset_peak(void)
+{
+    uint32_t flags = fm1_device_irq_save();
+    statistics.peak_ticks = 0;
+    fm1_device_irq_restore(flags);
+}
 void fm1_audio_stats_read(struct fm1_audio_stats *out)
 {
     if (!out) return;
