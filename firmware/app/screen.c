@@ -18,6 +18,10 @@
 #include "version.h"
 #include "fm1_engine_control.h"
 #include "fm4/fm4_core.h"
+#include "fm_patch.h"
+#include "fm1_device.h"
+#include "drum808.h"
+#include "sampledrum.h"
 #include <string.h>
 
 enum { BACK = 0x0000, PANEL = 0x18e3, TEXT = 0xef5d, ACCENT = 0x07ff, DIM = 0x738e,
@@ -680,15 +684,117 @@ static void keep_sdk_alive(void)
     /* Test-Firmware requires these SDK symbols; only the stock UI referenced
      * them. A reachable call guarded by a volatile that is never set keeps
      * them linked without ever running them. */
+#ifndef FM1_HOST_TEST
     if (keepalive_never == 0x5EED) {
-        struct fm1_ble_status st; struct fm1_ble_device dev; struct fm1_bluetooth_status bt;
+        /* Every SDK library function the stock fm1_open app called: they keep
+         * the library's native DSP and Bluetooth paths linked exactly as in a
+         * stock build (Build.ps1 checks those symbols). Never executed. */
         static struct groove_tuning tun[GROOVE_TRACKS];
-        fm1_ble_set_role(FM1_BLE_PERIPHERAL); fm1_ble_scan(); fm1_ble_connect(0); fm1_ble_disconnect();
-        fm1_ble_get_status(&st); fm1_ble_get_device(0, &dev); fm1_ble_forget_bonds();
-        fm1_bluetooth_configure(FM1_BT_MIDI); fm1_bluetooth_get_status(&bt);
-        groove_tuning_capture(tun); groove_tuning_apply(tun);
-        groove_project_apply_edit(groove_project_scratch(), 0);
+        (void)groove_tuning_capture(tun); (void)groove_tuning_apply(tun);
+        (void)drum808_nparams(0);
+        (void)drum808_param(0,0);
+        (void)fm1_ble_connect(0);
+        (void)fm1_ble_disconnect();
+        (void)fm1_ble_forget_bonds();
+        (void)fm1_ble_get_device(0,0);
+        fm1_ble_get_status(0);
+        (void)fm1_ble_scan();
+        (void)fm1_ble_set_role(0);
+        (void)fm1_bluetooth_configure(0);
+        fm1_bluetooth_get_status(0);
+        fm1_engine_pause();
+        fm1_engine_resume();
+        fm1_engine_stats_read(0);
+        fm1_engine_stop();
+        (void)fm1_flash_invalidate(0,0);
+        (void)fm1_flash_map(0,0);
+        groove_adsr_edit(0,0,0);
+        groove_adsr_enable(0,0);
+        groove_arp_edit(0,0,0);
+        (void)groove_arp_enabled(0);
+        groove_arp_set(0,0);
+        (void)groove_arp_setting(0,0);
+        (void)groove_arrangement_capture(0);
+        (void)groove_arrangement_tuning_apply(0);
+        (void)groove_arrangement_tuning_capture(0);
+        groove_audio_stats(0);
+        (void)groove_clock_mode();
+        groove_clock_set(0);
+        groove_control_edit(0,0,0,0);
+        (void)groove_delay_ticks();
+        (void)groove_drum_steps(0,0);
+        groove_edit_checkpoint(0);
+        (void)groove_edit_clear(0,0,0);
+        (void)groove_edit_clipboard_count();
+        (void)groove_edit_copy(0,0,0);
+        (void)groove_edit_cursor();
+        (void)groove_edit_error();
+        (void)groove_edit_paste(0,0,0);
+        groove_edit_record(0,0,0);
+        (void)groove_edit_recording();
+        (void)groove_edit_repeat(0,0);
+        groove_edit_seek(0,0);
+        (void)groove_edit_undo();
+        groove_effects_edit(0,0);
+        groove_effects_get(0);
+        (void)groove_fm_copy(0,0,0);
+        groove_fm_edit(0,0,0);
+        (void)groove_fm_import(0,0);
+        groove_fm_name_edit(0,0,0);
+        groove_get_view(0,0,0);
+        (void)groove_key_note(0,0,0);
+        groove_lfo_copy(0,0);
+        groove_lfo_edit(0,0,0);
+        (void)groove_lfo_rate(0);
+        (void)groove_lock_parameter_name(0,0);
+        (void)groove_master_state();
+        (void)groove_midi_activity(0);
+        (void)groove_midi_input_channel(0);
+        (void)groove_midi_input_set(0,0);
+        groove_mix_toggle(0,0);
+        groove_mono_set(0,0);
+        groove_operator_toggle(0,0);
+        (void)groove_pad_count(0);
+        (void)groove_pad_index(0,0);
+        (void)groove_pad_label(0,0);
+        (void)groove_pad_name(0,0);
+        (void)groove_pad_note(0,0);
+        (void)groove_project_apply(0);
+        (void)groove_project_apply_edit(0,0);
+        groove_project_arp_defaults(0);
+        groove_project_clean();
+        (void)groove_project_dirty();
+        groove_project_touch();
+        (void)groove_project_valid(0);
+        groove_samples_stop();
+        groove_sends_edit(0,0,0);
+        groove_sends_get(0,0);
+        (void)groove_sequence_chord_name(0);
+        (void)groove_sequence_count_in();
+        groove_sequence_defaults(0);
+        groove_sequence_edit(0,0,0,0);
+        (void)groove_sequence_length(0);
+        groove_sequence_length_set(0,0);
+        (void)groove_sequence_rewound();
+        (void)groove_sequence_setting(0);
+        groove_sequence_setting_edit(0,0);
+        (void)groove_source_set(0,0);
+        (void)groove_source_type(0);
+        (void)groove_step_setting(0,0,0);
+        (void)groove_step_setting_edit(0,0,0,0);
+        groove_tempo_edit(0);
+        (void)groove_tempo_tap(0);
+        (void)groove_timbre_export(0,0,0);
+        (void)groove_timbre_import(0,0,0);
+        (void)groove_tone_copy(0,0,0);
+        (void)groove_tone_count(0,0);
+        groove_tone_edit(0,0,0,0);
+        (void)groove_tone_parameter(0,0,0);
+        (void)groove_track_role(0);
+        (void)sampledrum_bind(0,0,0,0,0);
+        (void)sampledrum_param(0);
     }
+#endif
 }
 
 void groove_screen_init(void)
