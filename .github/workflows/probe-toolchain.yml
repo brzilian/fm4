@@ -7,23 +7,28 @@ jobs:
   probe:
     runs-on: windows-latest
     steps:
-      - name: Download JieLi toolchain 2.5.3
+      - name: Download and inspect JieLi toolchain 2.5.3
         shell: pwsh
         run: |
-          curl.exe -fL --retry 3 -o jl253.exe https://jl-update.oss-cn-shenzhen.aliyuncs.com/2.5.3.exe
-          Get-Item jl253.exe | Format-List Name,Length
-          (Get-FileHash jl253.exe -Algorithm SHA256).Hash
-      - name: Inspect installer
-        shell: pwsh
-        run: |
-          & 7z l jl253.exe | Select-Object -First 80 | Out-String | Write-Host
-          & 7z l jl253.exe > listing.txt
-          Select-String -Path listing.txt -Pattern 'clang.exe|pi32v2-ld|LLVMgold|llvm-nm|llvm-objcopy' | Out-String | Write-Host
-          $sig = [IO.File]::ReadAllBytes('jl253.exe')[0..4096]
-          $text = [Text.Encoding]::ASCII.GetString($sig)
-          if ($text -match 'Inno') { 'Inno Setup' } elseif ($text -match 'Nullsoft') { 'NSIS' } else { 'unknown header' }
-          strings64 2>$null | Out-Null
-      - uses: actions/upload-artifact@v4
-        with:
-          name: toolchain-listing
-          path: listing.txt
+          $ErrorActionPreference = 'Continue'
+          function Note($t, $m) { $m = ($m | Out-String).Trim() -replace '%','%25' -replace "`r",'' -replace "`n",'%0A'; Write-Host "::notice title=$t::$m" }
+          curl.exe -fsSL --retry 3 -o jl253.exe https://jl-update.oss-cn-shenzhen.aliyuncs.com/2.5.3.exe
+          $len = (Get-Item jl253.exe).Length; $hash = (Get-FileHash jl253.exe -Algorithm SHA256).Hash
+          $head = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes('jl253.exe'))
+          $kind = if ($head -match 'Inno Setup') { 'Inno Setup' } elseif ($head -match 'Nullsoft') { 'NSIS' } else { 'unknown' }
+          Note 'installer' "bytes=$len sha256=$hash type=$kind"
+          $list = & 7z l jl253.exe 2>&1 | Out-String
+          Note '7z-head' ($list.Substring(0, [Math]::Min(3000, $list.Length)))
+          & 7z x -y -oext jl253.exe 2>&1 | Out-Null
+          $hits = Get-ChildItem ext -Recurse -Include clang.exe,pi32v2-ld.exe,LLVMgold.dll -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName) $((Get-FileHash $_ -Algorithm SHA256).Hash)" }
+          Note '7z-extract' ("files=" + (Get-ChildItem ext -Recurse -File -ErrorAction SilentlyContinue).Count + "`n" + ($hits -join "`n"))
+          if ($kind -eq 'Inno Setup') {
+            choco install innoextract -y --no-progress | Out-Null
+            innoextract -s -d inno jl253.exe 2>&1 | Out-Null
+            $hits = Get-ChildItem inno -Recurse -Include clang.exe,pi32v2-ld.exe,LLVMgold.dll -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName) $((Get-FileHash $_ -Algorithm SHA256).Hash)" }
+            Note 'innoextract' ($hits -join "`n")
+          }
+          Start-Process -FilePath .\jl253.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/S','/DIR=C:\JL' -Wait -PassThru | Out-Null
+          $hits = Get-ChildItem C:\JL -Recurse -Include clang.exe,pi32v2-ld.exe -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FullName) $((Get-FileHash $_ -Algorithm SHA256).Hash)" }
+          Note 'silent-install' ("C:\JL: " + ($hits -join "`n"))
+          exit 0

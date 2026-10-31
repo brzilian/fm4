@@ -1,7 +1,7 @@
 FM4 := ../firmware/app/fm4
 CFLAGS := -std=c99 -O2 -Wall -Wextra -Wno-unused-parameter -DFM4_HOST -I$(FM4)
 ENGINE := $(wildcard $(FM4)/*.c)
-TESTS := engine_test
+TESTS := engine_test seq_test
 
 all: $(TESTS)
 	@mkdir -p out
