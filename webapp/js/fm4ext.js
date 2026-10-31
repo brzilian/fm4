@@ -13,11 +13,20 @@
 
 export const FM4EXT_ID = Object.freeze([0x7D, 0x46, 0x34]);   // 7D 'F' '4'
 
+// Mirrors FM4X_* in firmware/app/fm4/fm4_core.h.
 export const FM4EXT_CMD = Object.freeze({
   STORE: 0x01,    // F0 7D 46 34 01 part slot F7             store part's edit buffer to user slot 0-99
-  READ: 0x02,     // F0 7D 46 34 02 slot F7                  load user slot into part 0, reply 191-byte dump
-  SELECT: 0x03,   // F0 7D 46 34 03 part bank program F7     bank 0 preset, 1 user; program 0-99
+                  //   -> ack F0 7D 46 34 41 status(0 ok, 1 fail) slot F7
+  READ: 0x02,     // F0 7D 46 34 02 slot F7                  user slot -> 191-byte TQ5 voice reply
+                  //   (EFEDS, ACED2, ACED, VCED; device number = the device's transmit channel)
+  SELECT: 0x03,   // F0 7D 46 34 03 part bank program F7     bank 0 preset, 1 user; program 0-99; no reply
+  INFO: 0x04,     // F0 7D 46 34 04 F7                       -> F0 7D 46 34 44 <ascii "FM-4 1.0 TQ5"> F7
 });
+export const FM4EXT_REPLY = 0x40;               // reply command = cmd | 0x40
+
+// Update identity of FM-4 builds (fm1_open family 7, vendor loader ota-FM-1_015).
+export const FM4_PRODUCT = "FM-1_8404100";
+export const FM4_PRODUCT_RE = /^FM-1_84\d{5}$/;
 
 export const FM4EXT_BANK = Object.freeze({ PRESET: 0, USER: 1 });
 export const USER_SLOTS = 100;
@@ -25,7 +34,8 @@ export const DEVICE_MAX_RX = 1024;   // largest SysEx frame the device accepts
 export const DEVICE_MAX_TX = 128;    // largest message the device sends
 
 // Pacing used for one-voice-at-a-time bank transfers (milliseconds).
-export const PACE = Object.freeze({ message: 20, afterStore: 150, readTimeout: 1500 });
+// One request in flight at a time; wait for the reply or ack, retry once.
+export const PACE = Object.freeze({ message: 20, timeout: 1000, retries: 1 });
 
 const u7 = (v, what) => {
   if (!Number.isInteger(v) || v < 0 || v > 127) throw new RangeError(`${what} must be 0-127`);
@@ -44,6 +54,21 @@ export const selectMsg = (part, bank, program) => {
   return Uint8Array.of(0xF0, ...FM4EXT_ID, FM4EXT_CMD.SELECT, partOk(part), bank, u7(program, "program"), 0xF7);
 };
 
+export const infoMsg = () => Uint8Array.of(0xF0, ...FM4EXT_ID, FM4EXT_CMD.INFO, 0xF7);
+
 export function isFm4Ext(msg) {
   return msg.length >= 6 && msg[0] === 0xF0 && msg[1] === 0x7D && msg[2] === 0x46 && msg[3] === 0x34 && msg.at(-1) === 0xF7;
+}
+
+/** Decode an extension reply: {cmd, ...fields} or null. */
+export function parseExtReply(msg) {
+  if (!isFm4Ext(msg) || !(msg[4] & FM4EXT_REPLY)) return null;
+  const cmd = msg[4] & ~FM4EXT_REPLY;
+  if (cmd === FM4EXT_CMD.STORE && msg.length === 8) return { cmd, ok: msg[5] === 0, status: msg[5], slot: msg[6] };
+  if (cmd === FM4EXT_CMD.INFO) {
+    const text = String.fromCharCode(...msg.subarray(5, -1).filter((c) => c >= 32 && c < 127));
+    const m = /^FM-4\s+(\S+)/.exec(text);
+    return { cmd, text, version: m ? m[1] : "" };
+  }
+  return { cmd };
 }

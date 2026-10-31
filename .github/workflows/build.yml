@@ -54,11 +54,15 @@ jobs:
         run: |
           set -e
           sha=$(git rev-parse --short HEAD)
-          mkdir -p /tmp/out && cp firmware/build/dx7/generated/*.fwsc /tmp/out/FM-4-$sha.fwsc
-          for f in firmware/build/dx7/*.json; do cp "$f" /tmp/out/; done
-          git config user.name "fm4-ci"; git config user.email "fm4-ci@users.noreply.github.com"
-          git fetch origin builds:builds 2>/dev/null || true
-          git switch builds 2>/dev/null || git switch --orphan builds
-          git rm -rq . 2>/dev/null || true
-          mkdir -p firmware && cp /tmp/out/* firmware/ && cp firmware/FM-4-$sha.fwsc firmware/FM-4-latest.fwsc
-          git add firmware && git commit -qm "Firmware build $sha" && git push origin builds
+          out=$(mktemp -d)
+          cp firmware/build/dx7/generated/FM1_OFFICIAL_OPEN.fwsc "$out/FM-4-$sha.fwsc"
+          cp "$out/FM-4-$sha.fwsc" "$out/FM-4-latest.fwsc"
+          cp firmware/build/dx7/build-identity.json firmware/build/dx7/firmware-report.json firmware/build/dx7/package-report.json "$out/"
+          echo "$sha" > "$out/COMMIT"
+          git config --global user.name "fm4-ci"; git config --global user.email "fm4-ci@users.noreply.github.com"
+          pub=$(mktemp -d)
+          if git fetch --depth 1 origin builds; then git worktree add "$pub" FETCH_HEAD; else git worktree add --detach "$pub"; (cd "$pub" && git checkout --orphan tmp && git rm -rqf .); fi
+          cd "$pub"
+          git rm -rqf . 2>/dev/null || true
+          mkdir -p firmware && cp "$out"/* firmware/
+          git add -A firmware && git commit -qm "Firmware build $sha" && git push -f origin HEAD:builds
