@@ -6,3 +6,7 @@ firmware/build/
 node_modules/
 *.o
 FM-4-webapp.zip
+
+# user-supplied third-party SysEx banks (not redistributed)
+tests/data/*.SYX
+tests/data/*.syx
