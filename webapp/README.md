@@ -35,7 +35,18 @@ as one; any other host must use `https://`. Opening `index.html` as a `file://` 
   | STORE | `F0 7D 46 34 01 part slot F7` | `F0 7D 46 34 41 status slot F7` (0 = ok) |
   | READ | `F0 7D 46 34 02 slot F7` | the 191-byte voice |
   | SELECT | `F0 7D 46 34 03 part bank program F7` | none |
-  | INFO | `F0 7D 46 34 04 F7` | `F0 7D 46 34 44 "FM-4 1.0 TQ5" F7` |
+  | INFO | `F0 7D 46 34 04 F7` | `F0 7D 46 34 44 "FM-4 1.1 TQ5" F7` |
+  | PREPARE_STOCK (1.1+) | `F0 7D 46 34 05 "STOCK" F7` | `F0 7D 46 34 45 status erased remaining F7` (0 = clean) |
+
+- Before **Restore stock V15** on an FM-4, the Install tab sends PREPARE_STOCK after the voice
+  backup and unlocks the install only when the FM-4 reports that none of its data lies in stock
+  V15's data area (flash 0x93000 and up). FM-4 1.0 does not answer it and stored songs 3–8 there;
+  the page blocks it unless the user confirms those songs were never saved. See
+  `../docs/RECOVERY.md`.
+- **Recovery** (Install tab): `js/recovery.js` checks a 1 MiB full-flash dump (MvaveFM1Unbricker's
+  `full-flash-before.bin`) in the browser and prints the exact jl-uboot-tool `erase` commands for
+  FM-4 data found in stock's area. The same check on the command line, on any OS:
+  `node tools/fm1_dump_check.mjs full-flash-before.bin`.
 
 - `.syx` import and export always use the full TQ5 formats.
 

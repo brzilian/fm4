@@ -257,3 +257,6 @@ dialog h2 { margin: 0 0 8px; font: 700 20px var(--font-legend); }
   .kbd { height: 110px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.recovery summary { cursor: pointer; font-weight: 600; }
+.recovery ol { padding-left: 1.4em; }
+.rec-report { max-height: 420px; overflow: auto; font-size: 12px; background: var(--card); padding: 8px; border: 1px solid var(--rule); white-space: pre-wrap; overflow-wrap: anywhere; }

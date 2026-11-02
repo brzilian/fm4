@@ -5,6 +5,11 @@
 
 #define NO_PART 0xff
 
+/* CPU governor state (see multi_governor). */
+static volatile uint8_t gov_over;
+static unsigned gov_cap = OPZ_MAX_VOICES;     /* usable slots */
+static unsigned gov_hold, gov_calm;
+
 void multi_init(multi_state *m, unsigned polyphony)
 {
     memset(m, 0, sizeof *m);
@@ -24,6 +29,7 @@ void multi_init(multi_state *m, unsigned polyphony)
         pt->data.perf.pb_range = 2; pt->data.perf.transpose = 24;
     }
     memset(m->slot_part, NO_PART, sizeof m->slot_part);
+    gov_over = 0; gov_cap = OPZ_MAX_VOICES; gov_hold = gov_calm = 0;
 }
 
 void multi_set_voice(multi_state *m, unsigned part, const multi_voice_data *v)
@@ -94,11 +100,61 @@ static FM4_AUDIO_CODE unsigned part_voices(const multi_state *m, unsigned p)
  * parts over their reserve, own released voices, held voices of parts over
  * their reserve, own held voices. Voices inside another part's reserve are
  * never taken. Oldest first within a class. */
+/* ---- CPU governor -----------------------------------------------------------
+ * The board's audio interrupt reports how long the FM-4 render took
+ * (multi_governor). Above the high mark the usable polyphony drops by one and
+ * the oldest voice fades out in ~10 ms (applied by the next multi_render);
+ * below the low mark it comes back one voice per second. Nothing is saved:
+ * sys.polyphony stays what the user set, and no note is cut hard. */
+
+static FM4_AUDIO_CODE unsigned voice_limit(const multi_state *m)
+{
+    return gov_cap < m->eng.voices ? gov_cap : m->eng.voices;
+}
+
+FM4_AUDIO_CODE void multi_governor(uint32_t used, uint32_t budget)
+{
+    if (!budget) return;
+    if (gov_hold) --gov_hold;
+    if (used > budget - (budget >> 2) - (budget >> 3)) {          /* > 62.5 % */
+        gov_calm = 0;
+        if (!gov_hold) { gov_over = 1; gov_hold = 16; }            /* ~46 ms apart */
+    } else if (used < (budget >> 1) - (budget >> 4)) {             /* < 43.75 % */
+        if (gov_cap < OPZ_MAX_VOICES && ++gov_calm >= 344) { ++gov_cap; gov_calm = 0; }   /* ~1 s */
+    } else gov_calm = 0;
+}
+
+static FM4_AUDIO_CODE void governor_shed(multi_state *m)
+{
+    unsigned active = 0, oldest = OPZ_MAX_VOICES; uint32_t key = 0xffffffffU;
+    for (unsigned s = 0; s < m->eng.voices; ++s) {
+        if (!m->eng.v[s].active) continue;
+        ++active;
+        /* released voices first, then held ones; oldest first in each */
+        uint32_t k = (m->eng.v[s].age & 0x7fffffffU) | (m->eng.v[s].keyed ? 0x80000000U : 0U);
+        if (k < key) { key = k; oldest = s; }
+    }
+    unsigned limit = voice_limit(m);
+    if (active <= 2 || limit <= 2) return;
+    gov_cap = (active < limit ? active : limit) - 1;
+    opz_fast_release(&m->eng, oldest);
+    m->slot_sustained[oldest] = 0;
+    ++m->gov_shed;
+}
+
 static FM4_AUDIO_CODE int alloc_slot(multi_state *m, unsigned p)
 {
     int best = -1, best_rank = 99; uint32_t best_age = 0xffffffffU;
+    /* a free slot only while fewer voices sound than the governor allows;
+     * otherwise steal as if the pool were full */
+    unsigned limit = voice_limit(m), active = 0; int free_slot = -1;
     for (unsigned s = 0; s < m->eng.voices; ++s) {
-        if (!m->eng.v[s].active) return (int)s;
+        if (m->eng.v[s].active) ++active;
+        else if (free_slot < 0) free_slot = (int)s;
+    }
+    if (free_slot >= 0 && active < limit) return free_slot;
+    for (unsigned s = 0; s < m->eng.voices; ++s) {
+        if (!m->eng.v[s].active) continue;
         unsigned owner = m->slot_part[s];
         int over = owner >= MULTI_PARTS || part_voices(m, owner) > m->part[owner].cfg.reserve;
         int held = m->eng.v[s].keyed;
@@ -237,15 +293,16 @@ FM4_AUDIO_CODE unsigned multi_parts_for_channel(const multi_state *m, unsigned c
 static FM4_AUDIO_CODE void controller(multi_state *m, unsigned p, unsigned cc, unsigned v)
 {
     multi_part *pt = &m->part[p];
-    switch (cc) {
-    case 1: pt->modwheel = (uint8_t)v; part_mod(m, p); break;
-    case 2: pt->breath = (uint8_t)v; part_mod(m, p); break;
-    case 4: pt->foot = (uint8_t)v; part_mod(m, p); refresh_part(m, p); break;
-    case 5: pt->data.perf.porta_time = (uint8_t)(v * 99U / 127U); break;
-    case 7: pt->cc_volume = (uint8_t)v; refresh_part(m, p); break;
-    case 10: pt->cfg.pan = (uint8_t)v; refresh_part(m, p); break;
-    case 11: pt->expression = (uint8_t)v; refresh_part(m, p); break;
-    case 64:
+    /* if-chain, not switch: a dense switch becomes a jump table in .rodata,
+     * which is Flash; this runs in the audio interrupt. */
+    if (cc == 1) { pt->modwheel = (uint8_t)v; part_mod(m, p); }
+    else if (cc == 2) { pt->breath = (uint8_t)v; part_mod(m, p); }
+    else if (cc == 4) { pt->foot = (uint8_t)v; part_mod(m, p); refresh_part(m, p); }
+    else if (cc == 5) pt->data.perf.porta_time = (uint8_t)(v * 99U / 127U);
+    else if (cc == 7) { pt->cc_volume = (uint8_t)v; refresh_part(m, p); }
+    else if (cc == 10) { pt->cfg.pan = (uint8_t)v; refresh_part(m, p); }
+    else if (cc == 11) { pt->expression = (uint8_t)v; refresh_part(m, p); }
+    else if (cc == 64) {
         pt->sustain_pedal = v >= 64;
         if (!pt->sustain_pedal)
             for (unsigned s = 0; s < m->eng.voices; ++s)
@@ -253,20 +310,15 @@ static FM4_AUDIO_CODE void controller(multi_state *m, unsigned p, unsigned cc, u
                     m->slot_sustained[s] = 0;
                     opz_key_off(&m->eng, s);
                 }
-        break;
-    case 120:
+    } else if (cc == 120) {
         for (unsigned s = 0; s < m->eng.voices; ++s) if (m->slot_part[s] == p) opz_kill(&m->eng, s);
-        break;
-    case 121:
+    } else if (cc == 121) {
         pt->bend = 0; pt->modwheel = 0; pt->breath = 0; pt->aftertouch = 0; pt->expression = 127; pt->sustain_pedal = 0;
         part_mod(m, p); refresh_part(m, p);
-        break;
-    case 123:
+    } else if (cc == 123) {
         for (unsigned s = 0; s < m->eng.voices; ++s)
             if (m->slot_part[s] == p) { m->slot_sustained[s] = 0; opz_key_off(&m->eng, s); }
         pt->mono_count = 0; fm4_zero(pt->held, sizeof pt->held);
-        break;
-    default: break;
     }
 }
 
@@ -278,14 +330,11 @@ FM4_AUDIO_CODE void multi_midi(multi_state *m, const uint8_t *msg, unsigned len)
     unsigned parts = multi_parts_for_channel(m, ch);
     for (unsigned p = 0; parts; ++p, parts >>= 1) {
         if (!(parts & 1)) continue;
-        switch (kind) {
-        case 0x90: if (d2) { note_on(m, p, d1, d2); break; } /* fallthrough */
-        case 0x80: note_off(m, p, d1); break;
-        case 0xb0: controller(m, p, d1, d2); break;
-        case 0xe0: m->part[p].bend = (int16_t)(((int)(d2 << 7 | d1)) - 8192); refresh_part(m, p); break;
-        case 0xd0: m->part[p].aftertouch = (uint8_t)d1; part_mod(m, p); break;
-        default: break;
-        }
+        if (kind == 0x90 && d2) note_on(m, p, d1, d2);
+        else if (kind == 0x80 || kind == 0x90) note_off(m, p, d1);
+        else if (kind == 0xb0) controller(m, p, d1, d2);
+        else if (kind == 0xe0) { m->part[p].bend = (int16_t)(((int)(d2 << 7 | d1)) - 8192); refresh_part(m, p); }
+        else if (kind == 0xd0) { m->part[p].aftertouch = (uint8_t)d1; part_mod(m, p); }
     }
 }
 
@@ -303,6 +352,7 @@ FM4_AUDIO_CODE void multi_render(multi_state *m, int32_t *dry, int32_t *send)
         for (unsigned s = 0; s < m->eng.voices; ++s)
             if (m->slot_part[s] == p && m->eng.v[s].active) opz_set_pitch(&m->eng, s, (unsigned)from);
     }
+    if (gov_over) { gov_over = 0; governor_shed(m); }
     opz_render(&m->eng, dry, send);
 }
 

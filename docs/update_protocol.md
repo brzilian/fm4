@@ -205,6 +205,7 @@ What each tool verifies before sending anything:
 | Stage 2 (erase and write of 0x4000..0x92FFF) | **no A/B slot, no rollback.** If the host disconnects, the loader usually remains and can resume. If power fails on the device itself, the unit can **hard-brick**: the half-written app hangs, the SPL does not fall back to the loader, and recovery needs a USB_KEY dongle (Transporter) | **no** (`MvaveFM1Unbricker/README.md:258-266`) |
 | Firmware switch (data areas) | Felucca keeps data at `0x97000..0xDFFFF`, its loader at `0xE0000` and globals at `0xFC000`. These overlap stock V15's VM (`0x93000..0xE8FFF`) and are **not erased** by an OTA install. Stock then misreads them, so presets come out corrupted | needs System > Reset Patches or `repair-settings` (`MvaveFM1Unbricker/README.md:213-236`; `fm1_unbrick.py:65-84`) |
 | Open → stock | Open's USER area is 536576 bytes ending at `0xFF000` (`Package.cs:13,105`). It overwrites the USR area where stock keeps its factory voices, so Open rewrites the four stock voice banks after installing V15 | handled by `restoreFactory` (`WebUpdate.js:377-402`) |
+| FM-4 → stock | The same user partition is flash `0x7C000..0xFEFFF`. Only offsets `0..0x16FFF` (flash `0x7C000..0x92FFF`) are rewritten by the stock image; everything above is stock's settings store, Bluetooth data and factory voices. FM-4 1.0 stored songs 3–8 at flash `0x93000..0xC8FFF`; they survive the restore and stock reads them as its settings | FM-4 1.1 never writes there, migrates 1.0 songs, and the page sends `PREPARE_STOCK` before the restore (§3.5) |
 
 Mitigations:
 
@@ -320,6 +321,43 @@ Stale data from the previous firmware stays in VM and USR. Advise the user to ru
 Reset Patches, then Unbricker `repair-settings` if presets still look wrong
 (`MvaveFM1Unbricker/README.md:213-236`). Open's `restoreFactory` already covers the voice-bank
 part.
+
+### 3.5 FM-4 → stock: keep stock's data area clean (added 2026-11-02)
+
+A unit returned from FM-4 1.0 to V15 came up with a blank screen. What is known, and what is not:
+
+| Fact | Evidence |
+| --- | --- |
+| The SDK user partition (`fm1_flash_*`, offset 0) is flash `0x7C000..0xFEFFF` | `Package.cs:13,105` (`FlashLimit 0xFF000`, `UserSize 536576`, record `USER` at `FlashLimit-UserSize`); `Build.ps1:346` |
+| Stock V15's flash directory: app `0x4000..0x92FFF`, `VM 0x93000` size `0x56000`, `BTIF 0xE9000`, `USR 0xEA000` size `0x12000` | decoded from `FM-1_015.fwsc` flash.bin `app_dir_head` (cipher `0x980F ^ (p>>2)`, as `Package.cs:107`) |
+| A factory unit has data only in sector `0x93000` of the VM, starting `55 AA AA 55` | `MvaveFM1Unbricker/fm1_unbrick.py` `VM_MAGIC`, `repair-settings` |
+| Every stock restore (vendor loader or Unbricker) writes `0x4000..0x92FFF` only | Unbricker README; flash.bin of V15 is `0x93000` bytes |
+| FM-4 1.0 songs `n` were at offset `0x5000 + n·0x9000`: song 3 (`n=2`) at flash `0x93000` exactly, songs 3–8 cover `0x93000..0xC8FFF` | `fm4_core.c` layout 1 (`OFF_SONGS`, `SONG_STRIDE`) |
+| FM-4 1.0 wrote a song only on SAVE SONG; settings and voices (flash `0x7C000..0x80FFF`) are inside the stock image and are overwritten by the restore | `fm4_core.c`, `screen.c` |
+| Not known: how stock's JieLi VM code reacts to foreign bytes at `0x93000`. Felucca data at `0x97000..0xDFFFF` only corrupted presets; data on the VM's first sector has not been reported before | Unbricker README "Settings corrupted after going back to stock" |
+
+So FM-4 1.0 is a confirmed hazard for stock **if songs 3–8 were saved**, and the likeliest
+FM-4-specific cause of the blank screen. If they were never saved, FM-4 left nothing in stock's
+area and the cause is elsewhere (an incomplete write; see `RECOVERY.md`). Only a full-flash dump
+settles it.
+
+Fixes:
+
+1. **Firmware (FM-4 1.1, storage layout 2).** All FM-4 records live in partition offsets
+   `0..0x16FFF` (`FM4_FLASH_WINDOW`), i.e. inside the stock image; `save_record` refuses anything
+   that would end beyond it; `fm4_hw_flash_size()` reports 0 unless the SDK partition is exactly
+   536576 bytes (otherwise the flash address of offset 0 is unknown). Songs take 8 KiB each
+   (1018 events saved). On its first start 1.1 moves 1.0 songs into layout 2 and erases the old
+   records (only sectors that carry an FM-4 1.0 song header), then writes a layout marker.
+2. **PREPARE_STOCK** (`F0 7D 46 34 05 "STOCK" F7`, `docs/SYSEX.md`): erases any FM-4 1.0 song
+   records outside the window and reports whether any FM-4 header remains there.
+3. **Installer.** For *Restore stock V15* on an FM-4: after the verified voice backup, the page
+   sends PREPARE_STOCK and unlocks the install only on status 0. FM-4 1.0 does not answer; the
+   page then blocks unless the user confirms that songs 3–8 were never saved (better: install 1.1
+   first). The stock package is also checked against V15's firmware-region hash
+   `6edf3c37…8255686` (the region the Unbricker writes) in addition to the file hash.
+4. **Recovery.** Install > Recovery and `webapp/tools/fm1_dump_check.mjs` check a full-flash dump
+   and print the exact jl-uboot-tool `erase` commands. Step-by-step: `docs/RECOVERY.md`.
 
 ---
 

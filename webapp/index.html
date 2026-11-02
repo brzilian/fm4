@@ -162,6 +162,10 @@
         <p>Recommended before your first custom install: switch the FM-1 to UBOOT and make a full-flash dump with <a href="https://github.com/Quixotic7/MvaveFM1Unbricker" rel="noopener">MvaveFM1Unbricker</a> (<code>softkey</code>, then <code>backup</code>; Windows or Linux).</p>
         <label class="check"><input type="checkbox" id="inst-ack"> I made a full-flash dump with MvaveFM1Unbricker, or I accept losing the stock settings and user patches.</label>
       </div>
+      <div id="inst-oldfm4-box" hidden>
+        <p>This FM-4 build is 1.0. It stored songs 3–8 inside the flash area that stock V15 uses for its settings, and it cannot check or clear them. Stock V15 can fail to start (blank screen) on that data. Install FM-4 1.1 or later first: it moves the songs out on its first start. Then come back here.</p>
+        <label class="check"><input type="checkbox" id="inst-oldfm4"> I never saved songs 3–8 on this FM-4 (song 1 and 2 are fine).</label>
+      </div>
       <div id="inst-have-box" hidden>
         <label class="check"><input type="checkbox" id="inst-have"> I already saved a backup before the interrupted update.</label>
       </div>
@@ -183,6 +187,18 @@
     </div>
 
     <details class="log"><summary>Connection log</summary><pre id="inst-log"></pre></details>
+
+    <details class="group recovery" id="recovery">
+      <summary>Recovery: blank screen after restoring stock V15</summary>
+      <p>FM-4 1.0 saved songs 3–8 inside the flash area where stock V15 keeps its settings (from 0x93000). Stock can then stop at a blank screen. FM-4 1.1 never writes there, moves old songs out on its first start, and this page checks before every stock restore. To recover a unit that already shows a blank screen (step-by-step guide: <a href="https://github.com/brzilian/fm4/blob/main/docs/RECOVERY.md">docs/RECOVERY.md</a>):</p>
+      <ol>
+        <li><strong>Try this page first.</strong> Choose <em>Restore stock V15</em> and press <em>Connect</em>. If the FM-1 answers as <code>ota-FM-1_015</code> (its update loader; the screen is blank there too), choose <em>Resume</em>: the interrupted write finishes from here.</li>
+        <li><strong>If no FM-1 is found:</strong> on Windows (administrator PowerShell) or Linux, look for the USB disk <code>WL82 UBOOT1.00</code> (USB 4C4A:8057) and use <a href="https://github.com/Quixotic7/MvaveFM1Unbricker" rel="noopener">MvaveFM1Unbricker</a>: <code>py fm1_unbrick.py setup</code>, then <code>py fm1_unbrick.py restore FM-1.fwsc</code>. Never click “Format disk”. macOS cannot drive that disk.</li>
+        <li><strong>Check the dump.</strong> The Unbricker saves <code>backups/fm1-recovery-…/full-flash-before.bin</code> before it writes. Open it here: the check runs in this browser, nothing is uploaded or sent to the FM-1. It tells you whether FM-4 data sits in stock's settings area and prints the exact jl-uboot-tool <code>erase</code> commands.</li>
+      </ol>
+      <label class="field">Full-flash dump (1 MiB .bin) <input type="file" id="rec-file" accept=".bin,application/octet-stream"></label>
+      <pre id="rec-report" class="rec-report" hidden></pre>
+    </details>
 
     <!-- Hook for a device settings panel (system, multi setup). Mount it with FM4App.mountDevicePanel(fn). -->
     <section id="device-panel-hook" class="device-panel" aria-label="Device" hidden></section>

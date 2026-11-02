@@ -6,7 +6,7 @@
 // travel as the 4 TQ5 messages (EFEDS 21, ACED2 28, ACED 41, VCED 101) and banks one voice at a
 // time through the extension commands in fm4ext.js. One request is in flight at a time.
 
-import { storeMsg, readMsg, infoMsg, selectMsg, parseExtReply, FM4EXT_CMD, PACE, USER_SLOTS } from "./fm4ext.js";
+import { storeMsg, readMsg, infoMsg, prepareStockMsg, selectMsg, parseExtReply, FM4EXT_CMD, PACE, USER_SLOTS } from "./fm4ext.js";
 
 const sleepReal = (ms) => new Promise((r) => setTimeout(r, ms));
 const LM_EFEDS = [0x4C, 0x4D, 0x20, 0x20, 0x38, 0x30, 0x33, 0x36, 0x45, 0x46];
@@ -94,6 +94,15 @@ export class Fm4Device {
     return this._exclusive(() => this._ask(infoMsg(), (m) => {
       const r = parseExtReply(m); return r && r.cmd === FM4EXT_CMD.INFO ? r : undefined;
     }).catch((e) => { if (e.code === "timeout") return null; throw e; }));
+  }
+  /**
+   * PREPARE_STOCK (FM-4 1.1+): {ok, status, erased, remaining}, or null when nothing answers
+   * (FM-4 1.0 has no such command). Erasing can take a few seconds, hence the longer wait.
+   */
+  prepareStock({ timeout = Math.max(this.timeout, 30000) } = {}) {
+    return this._exclusive(() => this._ask(prepareStockMsg(), (m) => {
+      const r = parseExtReply(m); return r && r.cmd === FM4EXT_CMD.PREPARE_STOCK ? r : undefined;
+    }, timeout).catch((e) => { if (e.code === "timeout") return null; throw e; }));
   }
   /** Send the 4 messages of a 191-byte voice dump to an edit buffer, paced. */
   sendVoice(dump) { return this._exclusive(() => this._sendVoice(dump)); }

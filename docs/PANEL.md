@@ -55,7 +55,8 @@ Pressing the lit page button again steps to its next sub-page (shown as `1/3` in
 
 - **PLAY** starts/stops the current song. **REC** starts recording on the track chosen with ALGORITHM on the SONG page, playing the active part; press REC or PLAY to stop. The take is quantized (QUANTIZE) and merged into the song.
 - **SEQ + white key 1–8**: mute/unmute tracks 1–8.
-- Songs are 1–99 measures of 4/4 at 96 PPQ, up to 4096 events each; 8 songs are kept in Flash (SONG page 2: SAVE SONG).
+- Songs are 1–99 measures of 4/4 at 96 PPQ, up to 4096 events each while playing. 8 songs are kept in Flash (SONG page 2: SAVE SONG); a saved song holds up to 1018 events (about 500 notes). A longer song is not saved and the screen shows SONG TOO LONG; clear a track or shorten it and save again.
+- FM-4 1.1 changed the storage layout so that nothing is ever written where stock V15 keeps its data. On the first start after updating from 1.0, songs move to the new layout (SONGS MOVED; songs over 1018 events keep their first 1018 events: OLD SONGS SHORTENED).
 - CLOCK = MIDI follows external MIDI clock and Start/Stop/Continue.
 
 ## Single and multi mode

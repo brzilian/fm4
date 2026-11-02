@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { codec as makeCodec, randomVoice, eq, WEBAPP } from "./helpers.mjs";
 import { Fm4Device, Throttle, splitSysex, voiceRequest } from "../js/device.js";
-import { storeMsg, readMsg, selectMsg, infoMsg, parseExtReply, FM4EXT_CMD, DEVICE_MAX_RX, DEVICE_MAX_TX, FM4_PRODUCT } from "../js/fm4ext.js";
+import { storeMsg, readMsg, selectMsg, infoMsg, prepareStockMsg, parseExtReply, FM4EXT_CMD, DEVICE_MAX_RX, DEVICE_MAX_TX, FM4_PRODUCT } from "../js/fm4ext.js";
 import { ACTION } from "../js/codec.js";
 
 const c = await makeCodec();
@@ -22,6 +22,19 @@ test("extension bytes match the firmware's FM4X_* constants", () => {
   assert.match(readFileSync(join(WEBAPP, "../firmware/app/version.h"), "utf8"), new RegExp(`"${FM4_PRODUCT}"`));
   assert.deepEqual(parseExtReply(Uint8Array.of(0xF0, 0x7D, 0x46, 0x34, 0x41, 1, 5, 0xF7)), { cmd: 1, ok: false, status: 1, slot: 5 });
   assert.equal(parseExtReply(Uint8Array.of(0xF0, 0x7D, 0x46, 0x34, 0x44, ...new TextEncoder().encode("FM-4 1.0 TQ5"), 0xF7)).version, "1.0");
+});
+
+test("PREPARE_STOCK: bytes, reply parsing, and a silent FM-4 1.0", async () => {
+  assert.deepEqual(Array.from(prepareStockMsg()), [0xF0, 0x7D, 0x46, 0x34, 0x05, 0x53, 0x54, 0x4F, 0x43, 0x4B, 0xF7]);
+  assert.deepEqual(parseExtReply(Uint8Array.of(0xF0, 0x7D, 0x46, 0x34, 0x45, 0, 9, 0, 0xF7)), { cmd: 5, ok: true, status: 0, erased: 9, remaining: 0 });
+  assert.equal(parseExtReply(Uint8Array.of(0xF0, 0x7D, 0x46, 0x34, 0x45, 1, 0, 3, 0xF7)).ok, false);
+  const fns = new Set(); let answer = true;
+  const link = { send(m) { if (answer && m[4] === 5) setTimeout(() => fns.forEach((f) => f(Uint8Array.of(0xF0, 0x7D, 0x46, 0x34, 0x45, 0, 2, 0, 0xF7))), 1); return true; },
+    on(f) { fns.add(f); return () => fns.delete(f); } };
+  const dev = new Fm4Device(link, { timeout: 50 });
+  assert.deepEqual(await dev.prepareStock({ timeout: 100 }), { cmd: 5, ok: true, status: 0, erased: 2, remaining: 0 });
+  answer = false;
+  assert.equal(await dev.prepareStock({ timeout: 60 }), null, "no reply (FM-4 1.0) -> null");
 });
 
 /** A scripted FM-4: user bank of 130-byte voices, edit buffers per channel, size limits enforced. */

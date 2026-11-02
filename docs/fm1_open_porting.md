@@ -347,6 +347,15 @@ The LCD spans x ≈ 29–55 %. KNOB 1–4 are named on screen by labels drawn at
 
   Keep `struct header { magic, version, generation, target, crc, commit }` and the staging → target sequence. Debounce settings writes as `project.c:832` does (1.5 s). There is about 500 KiB available.
 
+  > **Correction (2026-11-02).** "About 500 KiB available" is true for FM-4 itself but ignores the
+  > way back to stock. Partition offsets 0x17000 and up are flash 0x93000..0xFEFFF, which stock V15
+  > uses for its settings store (JieLi VM, 0x93000..0xE8FFF, factory header `55 AA AA 55` at
+  > 0x93000), Bluetooth data (0xE9000) and factory voices (0xEA000..0xFBFFF). A stock restore
+  > rewrites only 0x4000..0x92FFF, so anything FM-4 writes above 0x93000 stays behind and stock
+  > reads it as its own. FM-4 1.0 put songs 3–8 there (song 3 exactly on 0x93000). FM-4 1.1 keeps
+  > everything in offsets 0..0x16FFF (flash 0x7C000..0x92FFF, inside the stock image) and has a
+  > PREPARE_STOCK command; see `fm4_core.h`, `docs/update_protocol.md` §3.5 and `docs/RECOVERY.md`.
+
 ---
 
 ## 6. Build

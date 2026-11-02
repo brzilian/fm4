@@ -76,6 +76,8 @@ FM4_AUDIO_CODE void opz_key_on(opz_engine *e, unsigned slot, const opz_patch *p,
                                int32_t gain_l, int32_t gain_r, int32_t send);
 FM4_AUDIO_CODE void opz_key_off(opz_engine *e, unsigned slot);
 FM4_AUDIO_CODE void opz_kill(opz_engine *e, unsigned slot);
+/* Release with a very fast (~10 ms, click-free) envelope: voice shedding. */
+FM4_AUDIO_CODE void opz_fast_release(opz_engine *e, unsigned slot);
 /* Legato pitch change (mono / portamento) without retriggering envelopes. */
 FM4_AUDIO_CODE void opz_set_pitch(opz_engine *e, unsigned slot, unsigned pitch64);
 FM4_AUDIO_CODE void opz_set_bend(opz_engine *e, unsigned slot, int bend64);
@@ -92,5 +94,5 @@ FM4_AUDIO_CODE int opz_voice_busy(const opz_engine *e, unsigned slot);
 /* Coarse ratio of CRS value as x100 (for display), e.g. 141 for 1.41. */
 unsigned opz_ratio_x100(unsigned crs, unsigned fine);
 /* Fixed frequency in Hz for display. */
-unsigned opz_fixed_hz(unsigned crs, unsigned fixrg, unsigned fine);
+FM4_AUDIO_CODE unsigned opz_fixed_hz(unsigned crs, unsigned fixrg, unsigned fine);
 #endif

@@ -138,7 +138,13 @@ export class FakeFM2 {
   ext(d) {
     const f = this.o.fm4; if (!f || this.inLoader) return;
     const cmd = d[4];
-    if (cmd === 0x04 && d.length === 6) this.tx([0xF0, 0x7D, 0x46, 0x34, 0x44, ...new TextEncoder().encode("FM-4 1.0 TQ5"), 0xF7]);
+    if (cmd === 0x04 && d.length === 6) this.tx([0xF0, 0x7D, 0x46, 0x34, 0x44, ...new TextEncoder().encode(`FM-4 ${f.version || "1.1"} TQ5`), 0xF7]);
+    // PREPARE_STOCK (FM-4 1.1+): f.prepare = {status, erased, remaining}; FM-4 1.0 stays silent
+    if (cmd === 0x05 && d.length === 11 && String.fromCharCode(...d.slice(5, 10)) === "STOCK" && (f.version || "1.1") !== "1.0") {
+      this.prepares = (this.prepares || 0) + 1; this.events.push("prepare");
+      const p = { status: 0, erased: 0, remaining: 0, ...f.prepare };
+      this.tx([0xF0, 0x7D, 0x46, 0x34, 0x45, p.status, p.erased, p.remaining, 0xF7]);
+    }
     if (cmd === 0x02 && d.length === 7) {
       if (f.dropRead?.has(d[5])) { f.dropRead.delete(d[5]); return; }   // lost reply: host must retry
       const c = f.codec; c.setVoice(5, f.voices[d[5]]);

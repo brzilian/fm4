@@ -20,7 +20,11 @@ export const FM4EXT_CMD = Object.freeze({
   READ: 0x02,     // F0 7D 46 34 02 slot F7                  user slot -> 191-byte TQ5 voice reply
                   //   (EFEDS, ACED2, ACED, VCED; device number = the device's transmit channel)
   SELECT: 0x03,   // F0 7D 46 34 03 part bank program F7     bank 0 preset, 1 user; program 0-99; no reply
-  INFO: 0x04,     // F0 7D 46 34 04 F7                       -> F0 7D 46 34 44 <ascii "FM-4 1.0 TQ5"> F7
+  INFO: 0x04,     // F0 7D 46 34 04 F7                       -> F0 7D 46 34 44 <ascii "FM-4 1.1 TQ5"> F7
+  PREPARE_STOCK: 0x05, // F0 7D 46 34 05 'S' 'T' 'O' 'C' 'K' F7 (FM-4 1.1+): erase every FM-4 record outside
+                  //   FM-4's storage window (layout-1 songs inside stock V15's settings store) and re-check
+                  //   -> F0 7D 46 34 45 status erased remaining F7; status 0 clean, 1 failed/remaining,
+                  //   2 storage unavailable. FM-4 1.0 does not answer.
 });
 export const FM4EXT_REPLY = 0x40;               // reply command = cmd | 0x40
 
@@ -55,6 +59,7 @@ export const selectMsg = (part, bank, program) => {
 };
 
 export const infoMsg = () => Uint8Array.of(0xF0, ...FM4EXT_ID, FM4EXT_CMD.INFO, 0xF7);
+export const prepareStockMsg = () => Uint8Array.of(0xF0, ...FM4EXT_ID, FM4EXT_CMD.PREPARE_STOCK, 0x53, 0x54, 0x4F, 0x43, 0x4B, 0xF7);
 
 export function isFm4Ext(msg) {
   return msg.length >= 6 && msg[0] === 0xF0 && msg[1] === 0x7D && msg[2] === 0x46 && msg[3] === 0x34 && msg.at(-1) === 0xF7;
@@ -65,6 +70,7 @@ export function parseExtReply(msg) {
   if (!isFm4Ext(msg) || !(msg[4] & FM4EXT_REPLY)) return null;
   const cmd = msg[4] & ~FM4EXT_REPLY;
   if (cmd === FM4EXT_CMD.STORE && msg.length === 8) return { cmd, ok: msg[5] === 0, status: msg[5], slot: msg[6] };
+  if (cmd === FM4EXT_CMD.PREPARE_STOCK && msg.length === 9) return { cmd, ok: msg[5] === 0, status: msg[5], erased: msg[6], remaining: msg[7] };
   if (cmd === FM4EXT_CMD.INFO) {
     const text = String.fromCharCode(...msg.subarray(5, -1).filter((c) => c >= 32 && c < 127));
     const m = /^FM-4\s+(\S+)/.exec(text);

@@ -8,6 +8,7 @@ import { Lcd } from "./lcd.js";
 import { Editor, Keyboard } from "./editor.js";
 import { Library } from "./library.js";
 import { mount as mountInstaller } from "./installer.js";
+import { mountRecovery, flashOfPackage } from "./recovery.js";
 import * as felucca from "../vendor/felucca/fm1backup.js";
 
 const $ = (id) => document.getElementById(id);
@@ -136,6 +137,12 @@ const installer = mountInstaller(document, {
     if (busy) for (const id of ["lib-read", "lib-write", "lib-send-one"]) $(id).disabled = true;
     else library.buttons();
   },
+});
+
+// Recovery: offline check of a full-flash dump against the packages this page already verified.
+mountRecovery(document, async () => {
+  await installer.ready;
+  return { stock: flashOfPackage(installer.state.pkgs.stock, true), fm4: flashOfPackage(installer.state.pkgs.fm4) };
 });
 
 lcd.show("FM-4  TQ5 VOICE", voiceName(editor.voice()).toUpperCase());

@@ -21,7 +21,8 @@ void seq_song_clear(seq_song *song, unsigned number)
     for (unsigned t = 0; t < SEQ_TRACKS; ++t) song->track_part[t] = (uint8_t)t;
 }
 
-uint32_t seq_song_ticks(const seq_song *song)
+/* Also called by advance() in the audio interrupt: must be SRAM code. */
+FM4_AUDIO_CODE uint32_t seq_song_ticks(const seq_song *song)
 {
     unsigned m = song->measures ? song->measures : 1;
     return (uint32_t)m * 4U * SEQ_PPQ;

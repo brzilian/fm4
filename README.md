@@ -30,6 +30,8 @@ Use the webapp's INSTALL tab in Chrome or Edge on a desktop computer with the FM
 
 > **There is no automatic rollback.** If the FM-1 loses power during the write it may need hardware recovery (see [MvaveFM1Unbricker](https://github.com/Quixotic7/MvaveFM1Unbricker)). FM-4 has not yet been validated on hardware; check `firmware-report.json` and run the hardware checklist in `docs/` before relying on it.
 
+> **Returning to stock V15 from FM-4 1.0 can leave a blank screen.** FM-4 1.0 stored songs 3–8 in the flash area stock V15 uses for its settings. Install FM-4 1.1 or later before restoring stock (it moves its songs out on its first start), and restore stock only from this project's webapp, which checks first. A unit that already shows a blank screen: [docs/RECOVERY.md](docs/RECOVERY.md).
+
 ## Licence
 
 GPL-3.0-only (fm1_open's linking exception applies to the firmware, which links M-VAVE's binary FM-1 SDK; see `firmware/LICENSE.md` and `firmware/THIRD_PARTY.md`). ymfm tables: BSD-3-Clause (`firmware/app/fm4/LICENSE-ymfm`). Not affiliated with M-VAVE or Yamaha. "TQ5", "TX81Z" and "DX" are Yamaha trademarks, used only to describe compatibility.

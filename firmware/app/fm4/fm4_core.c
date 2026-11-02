@@ -8,18 +8,39 @@
  *  - an audio->control ring for program changes and MIDI out.
  * Nothing in the audio path calls libc (it lives in Flash). */
 #include "fm4_core.h"
+#include <stddef.h>
 #include <string.h>
 
 /* ---- Storage layout inside the FM-1 user partition --------------------- */
+/* Layout 2 (FM-4 1.1): everything inside FM4_FLASH_WINDOW (see fm4_core.h).
+ *   0x00000  system + multi setup        1 sector   record v1 (unchanged from layout 1)
+ *   0x01000  user voice bank             4 sectors  record v1 (unchanged from layout 1)
+ *   0x05000  songs 0..7, 0x2000 each    16 sectors  record v2, only the used events
+ *   0x15000  layout marker               1 sector   "FM4L", version 2
+ *   0x16000  spare                       1 sector
+ * Layout 1 (FM-4 1.0) kept 9-sector songs at 0x05000 + n * 0x09000, so songs
+ * 3..8 (n = 2..7) sat at flash 0x93000..0xC8FFF: inside stock V15's settings
+ * store, song 3 exactly on its first sector. migrate_layout() moves them into
+ * layout 2 on the first boot and erases the old records. */
 #define SECTOR 4096U
 #define OFF_SYSTEM   0x00000U
 #define OFF_VOICES   0x01000U          /* 4 sectors */
 #define OFF_SONGS    0x05000U
-#define SONG_STRIDE  0x09000U          /* 9 sectors per song */
+#define OFF_LAYOUT   0x15000U
 #define MAGIC_SYSTEM 0x53344D46U       /* "FM4S" */
 #define MAGIC_VOICES 0x56344D46U       /* "FM4V" */
 #define MAGIC_SONG   0x47344D46U       /* "FM4G" */
+#define MAGIC_LAYOUT 0x4C344D46U       /* "FM4L" */
+#define LEGACY_SONGS  0x05000U         /* layout 1 */
+#define LEGACY_STRIDE 0x09000U
+#define LEGACY_SONG_SECTORS 9U
+#define SONG_HEAD ((uint32_t)offsetof(seq_song, ev))
 typedef struct { uint32_t magic, version, bytes, crc; } rec_header;
+#define SONG_CAPACITY ((FM4_SONG_SLOT_BYTES - (uint32_t)sizeof(rec_header) - SONG_HEAD) / (uint32_t)sizeof(seq_event))
+_Static_assert(OFF_SONGS + SEQ_SONGS * FM4_SONG_SLOT_BYTES <= OFF_LAYOUT, "songs overlap the layout marker");
+_Static_assert(OFF_LAYOUT + SECTOR <= FM4_FLASH_WINDOW, "FM-4 data must stay below stock's data (flash 0x93000)");
+_Static_assert(OFF_VOICES + sizeof(rec_header) + TQ5_BANK_VOICES * TQ5_VMEM <= OFF_SONGS, "voice bank overflows");
+_Static_assert(LEGACY_SONGS + LEGACY_STRIDE * 2 == FM4_FLASH_WINDOW, "layout 1 song 3 starts at stock's settings store");
 
 /* ---- State -------------------------------------------------------------- */
 static multi_state M;
@@ -132,24 +153,144 @@ void fm4_select(unsigned part, unsigned bank, unsigned program)
     stage_voice(part);
 }
 
-static int save_record(uint32_t off, uint32_t magic, const void *data, size_t n)
+/* The only writer of FM-4 records. Refuses anything that would end outside
+ * FM4_FLASH_WINDOW, so no save can reach stock V15's data (fm4_core.h). */
+static int save_record_v(uint32_t off, uint32_t magic, uint32_t version, const void *data, size_t n)
 {
     /* erase, write body, then the header last so a torn write never validates */
-    rec_header h = { magic, 1, (uint32_t)n, crc32(data, n) };
+    rec_header h = { magic, version, (uint32_t)n, crc32(data, n) };
     uint32_t end = off + (uint32_t)(sizeof h + n);
-    if (end > fm4_hw_flash_size()) return -1;
+    if (end > FM4_FLASH_WINDOW || end > fm4_hw_flash_size()) return -1;
     for (uint32_t s = off & ~(SECTOR - 1); s < end; s += SECTOR) if (fm4_hw_flash_erase(s)) return -2;
     if (fm4_hw_flash_write(off + sizeof h, data, n)) return -3;
     return fm4_hw_flash_write(off, &h, sizeof h) ? -3 : 0;
+}
+static int save_record(uint32_t off, uint32_t magic, const void *data, size_t n)
+{
+    return save_record_v(off, magic, 1, data, n);
 }
 
 static int load_record(uint32_t off, uint32_t magic, void *data, size_t n)
 {
     rec_header h;
     if (off + sizeof h + n > fm4_hw_flash_size()) return -1;
-    if (fm4_hw_flash_read(off, &h, sizeof h) || h.magic != magic || h.bytes != n) return -1;
+    if (fm4_hw_flash_read(off, &h, sizeof h) || h.magic != magic || h.version != 1 || h.bytes != n) return -1;
     if (fm4_hw_flash_read(off + sizeof h, data, n)) return -1;
     return crc32(data, n) == h.crc ? 0 : -2;
+}
+
+/* ---- Songs in flash (layout 2: header + only the used events) ----------- */
+static uint32_t song_offset(unsigned n) { return OFF_SONGS + (n & 7) * FM4_SONG_SLOT_BYTES; }
+unsigned fm4_song_capacity(void) { return SONG_CAPACITY; }
+
+static int song_write(unsigned n, const seq_song *g)
+{
+    if (g->count > SONG_CAPACITY) return -4;
+    return save_record_v(song_offset(n), MAGIC_SONG, FM4_LAYOUT_VERSION, g,
+                         SONG_HEAD + (size_t)g->count * sizeof(seq_event));
+}
+
+static int song_read(unsigned n, seq_song *g)
+{
+    rec_header h;
+    uint32_t off = song_offset(n);
+    if (off + FM4_SONG_SLOT_BYTES > fm4_hw_flash_size()) return -1;
+    if (fm4_hw_flash_read(off, &h, sizeof h) || h.magic != MAGIC_SONG || h.version != FM4_LAYOUT_VERSION) return -1;
+    if (h.bytes < SONG_HEAD || h.bytes > SONG_HEAD + SONG_CAPACITY * sizeof(seq_event) ||
+        (h.bytes - SONG_HEAD) % sizeof(seq_event)) return -1;
+    if (fm4_hw_flash_read(off + sizeof h, g, h.bytes)) return -1;
+    if (crc32(g, h.bytes) != h.crc || g->count != (h.bytes - SONG_HEAD) / sizeof(seq_event)) return -2;
+    return 0;
+}
+
+/* A layout-1 song record header at legacy slot n (FM-4 1.0). */
+static int legacy_song_at(uint32_t off)
+{
+    rec_header h;
+    if (off + LEGACY_SONG_SECTORS * SECTOR > fm4_hw_flash_size()) return 0;
+    return !fm4_hw_flash_read(off, &h, sizeof h) && h.magic == MAGIC_SONG && h.version == 1 && h.bytes == sizeof(seq_song);
+}
+
+/* Erase layout-1 records outside the window (in stock's settings store) and
+ * stale layout-1 headers inside it. Only sectors that carry an FM-4 layout-1
+ * song header are touched: whatever else is at those addresses belongs to
+ * stock and is left alone. Returns the number of failed erases. */
+static unsigned erase_legacy(unsigned *erased)
+{
+    unsigned failed = 0;
+    for (unsigned n = 0; n < SEQ_SONGS; ++n) {
+        uint32_t off = LEGACY_SONGS + n * LEGACY_STRIDE;
+        if (!legacy_song_at(off)) continue;
+        /* outside the window the whole record is FM-4's; inside it only the
+         * header sector is stale (the rest may hold layout-2 data) */
+        unsigned sectors = off >= FM4_FLASH_WINDOW ? LEGACY_SONG_SECTORS : 1;
+        for (unsigned s = 0; s < sectors; ++s) {
+            if (fm4_hw_flash_erase(off + s * SECTOR)) ++failed; else ++*erased;
+        }
+    }
+    return failed;
+}
+
+/* FM-4 record headers (any magic) at sector starts outside the window, up to
+ * the end of layout 1's song area. */
+static unsigned fm4_records_outside(void)
+{
+    unsigned found = 0;
+    uint32_t end = LEGACY_SONGS + SEQ_SONGS * LEGACY_STRIDE, size = fm4_hw_flash_size();
+    for (uint32_t off = FM4_FLASH_WINDOW; off < end && off + SECTOR <= size; off += SECTOR) {
+        rec_header h;
+        if (fm4_hw_flash_read(off, &h, sizeof h)) continue;
+        if (h.magic == MAGIC_SONG || h.magic == MAGIC_SYSTEM || h.magic == MAGIC_VOICES || h.magic == MAGIC_LAYOUT) ++found;
+    }
+    return found;
+}
+
+int fm4_storage_layout(void)
+{
+    rec_header h;
+    if (fm4_hw_flash_size() < FM4_FLASH_WINDOW) return 0;
+    if (fm4_hw_flash_read(OFF_LAYOUT, &h, sizeof h)) return 0;
+    return h.magic == MAGIC_LAYOUT && h.version == FM4_LAYOUT_VERSION && h.bytes == 0 ? (int)FM4_LAYOUT_VERSION : 0;
+}
+
+/* First boot of layout 2: move layout-1 songs (one RAM buffer suffices: new
+ * slot n ends before old slot n+1 starts), erase the old records, then mark
+ * the layout. Songs longer than a layout-2 slot keep their first events. */
+static void migrate_layout(void)
+{
+    if (fm4_hw_flash_size() < FM4_FLASH_WINDOW || fm4_storage_layout() == (int)FM4_LAYOUT_VERSION) return;
+    unsigned moved = 0, cut = 0, erased = 0;
+    for (unsigned n = 0; n < SEQ_SONGS; ++n) {
+        uint32_t off = LEGACY_SONGS + n * LEGACY_STRIDE;
+        if (!legacy_song_at(off)) continue;
+        if (load_record(off, MAGIC_SONG, &song, sizeof song) || song.count > SEQ_MAX_EVENTS) continue;
+        if (song.count > SONG_CAPACITY) { song.count = (uint16_t)SONG_CAPACITY; ++cut; }
+        if (!song_write(n, &song)) ++moved;
+    }
+    unsigned failed = erase_legacy(&erased);
+    if (!failed) {
+        rec_header h = { MAGIC_LAYOUT, FM4_LAYOUT_VERSION, 0, 0 };
+        if (!fm4_hw_flash_erase(OFF_LAYOUT)) (void)fm4_hw_flash_write(OFF_LAYOUT, &h, sizeof h);
+    }
+    if (cut) notice_text = "OLD SONGS SHORTENED";
+    else if (moved) notice_text = "SONGS MOVED";
+}
+
+int fm4_prepare_stock(unsigned *erased, unsigned *remaining)
+{
+    unsigned e = 0, r = 0;
+    int status;
+    if (fm4_hw_flash_size() < FM4_FLASH_WINDOW) status = 2;
+    else {
+        seq_stop(&seq);
+        unsigned failed = erase_legacy(&e);
+        r = fm4_records_outside();
+        status = failed || r ? 1 : 0;
+        if (!status) notice_text = "READY FOR STOCK";
+    }
+    if (erased) *erased = e;
+    if (remaining) *remaining = r;
+    return status;
 }
 
 int fm4_store(unsigned part, unsigned slot)
@@ -252,7 +393,7 @@ int fm4_song_load(unsigned n)
 {
     seq_stop(&seq);
     n &= 7;
-    if (load_record(OFF_SONGS + n * SONG_STRIDE, MAGIC_SONG, &song, sizeof song)) seq_song_clear(&song, n);
+    if (song_read(n, &song)) seq_song_clear(&song, n);
     if (song.count > SEQ_MAX_EVENTS) seq_song_clear(&song, n);
     sys.song = (uint8_t)n; settings_dirty = 1;
     seq_locate(&seq, 0);
@@ -261,8 +402,8 @@ int fm4_song_load(unsigned n)
 
 int fm4_song_save(void)
 {
-    int r = save_record(OFF_SONGS + (sys.song & 7) * SONG_STRIDE, MAGIC_SONG, &song, sizeof song);
-    notice_text = r ? "SONG SAVE FAILED" : "SONG SAVED";
+    int r = song_write(sys.song & 7, &song);
+    notice_text = r == -4 ? "SONG TOO LONG" : r ? "SONG SAVE FAILED" : "SONG SAVED";
     return r;
 }
 
@@ -293,6 +434,7 @@ void fm4_core_init(void)
     fx_init(&FX);
     M.master_tune = (int8_t)(sys.master_tune - 64);
     seq_init(&seq, &song, seq_emit, NULL);
+    migrate_layout();                 /* layout 1 -> 2 (uses the song buffer) */
     fm4_song_load(sys.song);
     fm4_set_mode(sys.mode);
     settings_dirty = 0;
@@ -396,7 +538,7 @@ FM4_AUDIO_CODE void fm4_core_render(int32_t *out)
     seq_block(&seq, FM4_BLOCK);
 
     static int32_t dry[FM4_BLOCK * 2], send[FM4_BLOCK * 2];
-    for (unsigned i = 0; i < FM4_BLOCK * 2; ++i) dry[i] = send[i] = 0;
+    fm4_zero32(dry, FM4_BLOCK * 2); fm4_zero32(send, FM4_BLOCK * 2);   /* not memset: libc is in Flash */
     multi_render(&M, dry, send);
     fx_render(&FX, send, dry);
     if (click_env > 0) {
@@ -408,7 +550,7 @@ FM4_AUDIO_CODE void fm4_core_render(int32_t *out)
             click_env -= click_env >> 9; if (click_env < 4096) click_env = 0;
         }
     }
-    for (unsigned i = 0; i < FM4_BLOCK * 2; ++i) out[i] = dry[i];
+    fm4_copy32(out, dry, FM4_BLOCK * 2);                                 /* not memcpy */
 }
 
 /* ---- Control poll ------------------------------------------------------------ */
@@ -470,6 +612,12 @@ static void handle_ext(const uint8_t *m, size_t n)
         for (const char *c = info; *c; ++c) reply[k++] = (uint8_t)*c;
         reply[k++] = 0xF7;
         queue_out(reply, k);
+    } else if (cmd == FM4X_PREPARE_STOCK && n == 11 && !memcmp(m + 5, "STOCK", 5)) {
+        unsigned erased, remaining;
+        int st = fm4_prepare_stock(&erased, &remaining);
+        uint8_t ack[9] = { 0xF0, FM4X_ID0, FM4X_ID1, FM4X_ID2, FM4X_PREPARE_STOCK | FM4X_REPLY, (uint8_t)st,
+                           (uint8_t)(erased > 127 ? 127 : erased), (uint8_t)(remaining > 127 ? 127 : remaining), 0xF7 };
+        queue_out(ack, sizeof ack);
     }
 }
 
@@ -586,10 +734,15 @@ void fm4_mark_dirty(void) { settings_dirty = 1; }
 void fm4_midi_out(const uint8_t *m, size_t n) { queue_out(m, n); flush_out(); }
 void fm4_core_tick(uint32_t now)
 {
-    static uint32_t dirty_since; static uint8_t was_dirty;
+    /* A Flash erase/write silences audio and holds off interrupts for tens
+     * of ms (audible dropout; the panel LED scan freezes, which shows as a
+     * brighter flash of the lit LED). Only save once the instrument has been
+     * silent for a while: no voice sounding, no song running. */
+    static uint32_t dirty_since, quiet_since; static uint8_t was_dirty;
+    if (multi_active_voices(&M) || seq.state != SEQ_STOPPED) quiet_since = now;
     if (!settings_dirty) { was_dirty = 0; return; }
     if (!was_dirty) { was_dirty = 1; dirty_since = now; return; }
-    if (now - dirty_since >= 2000U && seq.state == SEQ_STOPPED) { fm4_save_settings(); was_dirty = 0; }
+    if (now - dirty_since >= 2000U && now - quiet_since >= 3000U) { fm4_save_settings(); was_dirty = 0; }
 }
 
 unsigned fm4_voices_active(void) { return multi_active_voices(&M); }

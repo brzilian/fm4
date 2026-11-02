@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
 import { WEBAPP, read, codec as makeCodec, randomVoice, eq } from "./helpers.mjs";
 import { FakeFM2 } from "./fakefm2.mjs";
 import { makeFwsc } from "./fwsc.mjs";
-import { mount, IDS, classify, describeError, codeOf, progressOf, ERRORS } from "../js/installer.js";
+import { mount, IDS, classify, describeError, codeOf, progressOf, ERRORS, fm4CanPrepare, stockRegionOk } from "../js/installer.js";
 import { parseSyx } from "../js/syx.js";
 import { readZip } from "../js/zip.js";
 import { BACKUP_IDS, readBackup } from "../vendor/felucca/fm1backup.js";
@@ -146,7 +146,7 @@ test("FM-4 device: INFO, mandatory 100-voice backup, confirm, write, verify", as
   assert.match(u.pkg.textContent, /FM-4 1.0 · FM-1_8404100 · build 4d4d4d4d4d4d/);
   await u.connect.click();
   assert.deepEqual(calls, [{ sysex: true }]);
-  assert.match(u.device.textContent, /FM-1_8404100: FM-4, installed build 111111111111 \(FM-4 1.0 TQ5\)/);
+  assert.match(u.device.textContent, /FM-1_8404100: FM-4, installed build 111111111111 \(FM-4 1.1 TQ5\)/);
   assert.equal(u.install.disabled, true, "Install is locked before the backup");
   assert.equal(u.backupBox.hidden, false); assert.equal(u.backupRun.hidden, false);
   await u.install.click(); await ctl.install();
@@ -348,6 +348,62 @@ test("restore stock V15 from FM-4: backup, typed confirm, write, factory voices"
   assert.equal(dev.factoryWrites, 32);
   assert.ok(eq(dev.factory, factory), "the four factory banks match the pinned V15 data");
   assert.match(u.device.textContent, /Reset Patches/);
+  assert.equal(dev.prepares, 1, "PREPARE_STOCK sent once");
+  assert.ok(dev.events.indexOf("prepare") < dev.events.findIndex((e) => e.startsWith("upgrade")), "prepared before the update starts");
+  assert.match(u.backupStatus.textContent, /none of its data is in stock V15's settings area/);
+});
+
+test("FM-4 -> FM-4 update never sends PREPARE_STOCK", async () => {
+  const dev = new FakeFM2(FM1Web, FM4_IMAGE, { identity: "FM-1_8404100", build: OLD, finalIdentity: "FM-1_8404100", fm4: { codec, voices: fm4Voices() } });
+  const { u, ctl } = await page(dev);
+  await u.connect.click(); await u.backupRun.click(); await u.install.click(); await u.confirmGo.click();
+  assert.equal(ctl.state.phase, "done", `${u.errorTitle.textContent} ${u.errorDetail.textContent}`);
+  assert.equal(dev.prepares ?? 0, 0);
+  assert.equal(u.oldFm4Box.hidden, true);
+});
+
+test("restore stock: FM-4 reports leftover data -> blocked, nothing written", async () => {
+  const dev = new FakeFM2(FM1Web, STOCK_IMAGE, { identity: "FM-1_8404100", build: BUILD, finalIdentity: "FM-1_015",
+    fm4: { codec, voices: fm4Voices(), prepare: { status: 1, erased: 9, remaining: 2 } } });
+  const { u, ctl } = await page(dev);
+  await u.modeStock.check(true);
+  await u.connect.click(); await u.backupRun.click();
+  assert.equal(u.error.getAttribute("data-code"), "prepare");
+  assert.match(u.errorDetail.textContent, /2 FM-4 record/);
+  assert.equal(u.install.disabled, true);
+  assert.notEqual(ctl.state.phase, "backedup");
+  assert.equal(upgradesIn(dev.sent) + armIn(dev.sent), 0);
+});
+
+test("restore stock from FM-4 1.0: blocked until the user confirms songs 3-8 were never saved", async () => {
+  const dev = new FakeFM2(FM1Web, STOCK_IMAGE, { identity: "FM-1_8404100", build: BUILD, finalIdentity: "FM-1_015",
+    fm4: { codec, voices: fm4Voices(), version: "1.0" } });
+  const { u, ctl, downloads } = await page(dev);
+  await u.modeStock.check(true);
+  await u.connect.click();
+  assert.match(u.device.textContent, /FM-4 1\.0 TQ5/);
+  assert.equal(u.oldFm4Box.hidden, false, "the 1.0 warning is shown");
+  await u.backupRun.click();
+  assert.equal(u.error.getAttribute("data-code"), "oldfm4");
+  assert.equal(downloads.length, 0); assert.equal(u.install.disabled, true);
+  await u.oldFm4.check(true);
+  await u.backupRun.click();
+  assert.equal(downloads.length, 1, u.errorDetail.textContent);
+  assert.equal(dev.prepares ?? 0, 0, "1.0 has no PREPARE_STOCK; nothing is sent for it");
+  assert.match(u.backupStatus.textContent, /never saved/);
+  await u.install.click(); await u.confirmTyped.type("INSTALL"); await u.confirmGo.click();
+  assert.equal(ctl.state.phase, "done", `${u.errorTitle.textContent} ${u.errorDetail.textContent}`);
+});
+
+test("FM-4 version gate and the V15 firmware-region pin", async () => {
+  assert.equal(fm4CanPrepare("FM-4 1.0 TQ5"), false);
+  assert.equal(fm4CanPrepare("FM-4 1.1 TQ5"), true);
+  assert.equal(fm4CanPrepare("FM-4 2.0 TQ5"), true);
+  assert.equal(fm4CanPrepare(undefined), false);
+  const pkg = FM1Web.inspectPackage(STOCK, true);
+  assert.equal(await stockRegionOk(pkg), true);
+  const bad = { ...pkg, image: pkg.image.slice() }; bad.image[1024 + 0x50000] ^= 1;
+  assert.equal(await stockRegionOk(bad), false);
 });
 
 test("restore stock on a device already running V15 restores only the factory voices", async () => {

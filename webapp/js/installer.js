@@ -20,6 +20,10 @@ export const UNBRICKER_URL = "https://github.com/Quixotic7/MvaveFM1Unbricker";
 export const STOCK_SHA256 = "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a";
 export const VENDOR_LOADER_SHA256 = "ef1f2db89b011fa53e71df363f0122de0ea896618c53fb53e8da676322004541";
 export const STOCK_BYTES = 699956;
+/** SHA-256 of V15's firmware region (flash 0x4000..0x92FFF), the bytes MvaveFM1Unbricker writes. */
+export const V15_REGION_SHA256 = "6edf3c37fb5bbbc33607c89375ee024d5477c17914d72221c8c68e58a8255686";
+/** The FM-4 release whose storage stays out of stock V15's data and that answers PREPARE_STOCK. */
+export const FM4_PREPARE_VERSION = [1, 1];
 /** Used when firmware/fm4.json cannot be loaded: the stock restore still works from the embedded file. */
 export const FALLBACK_STOCK = Object.freeze({ schema: 1, kind: "stock", product: "FM-1_015", profile: "M-VAVE Original V15", family: 7,
   release_version: "V15", build_id: STOCK_SHA256, sha256: STOCK_SHA256, bytes: STOCK_BYTES, loader_sha256: VENDOR_LOADER_SHA256, url: "FM-1_015.fwsc" });
@@ -50,6 +54,8 @@ export const ERRORS = {
   mismatch: ["The FM-1 restarted with a different firmware than expected.", "This is not a successful install. Press Connect to read its identity; if it is in the loader, Resume."],
   badreq: ["The FM-1 asked for data outside the package.", "Stop here. Do not retry with this package; report the build id."],
   failed: ["The update did not finish.", "Keep the FM-1 connected and press Connect to see its state. If it no longer starts, see the recovery ladder below."],
+  oldfm4: ["This FM-4 build (1.0) may have stored songs inside stock V15's settings area.", "Nothing was written. FM-4 1.0 saved songs 3–8 at flash 0x93000–0xC8FFF, where stock keeps its settings; stock can fail to start on that data (blank screen). Install FM-4 1.1 or later first (it moves its songs out on its first start), then restore stock. Only if you never saved songs 3–8, tick the box below and run the backup again."],
+  prepare: ["The FM-4 could not clear its data out of stock V15's settings area.", "Nothing was written. Switch the FM-1 off and on, press Connect and run the backup again. If it fails again, do not restore stock from this page: make a full-flash dump with the Unbricker and see the Recovery section."],
 };
 
 const MESSAGE_CODES = [
@@ -140,6 +146,22 @@ export const BACKUP_TEXT = {
   stock: "Stock V15 cannot be backed up over MIDI. Only a full-flash dump made with the Unbricker (Windows or Linux) preserves stock settings and user patches.",
   resume: "An update loader cannot export a backup. Continue only if you already saved a backup before the interrupted update.",
 };
+const STOCK_FROM_FM4_TEXT = " Before stock V15 is written, the FM-4 is asked to confirm that none of its data lies in the flash area stock V15 uses for its settings (and to erase any it finds there). Songs are not included in the backup and are erased by the stock restore.";
+
+/** "FM-4 1.1 TQ5" -> true when the build answers PREPARE_STOCK. */
+export function fm4CanPrepare(infoText) {
+  const m = /^FM-4\s+(\d+)\.(\d+)/.exec(infoText || "");
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])], [x, y] = FM4_PREPARE_VERSION;
+  return a > x || (a === x && b >= y);
+}
+
+/** Extra pin on the stock package: its firmware region must be V15's, byte for byte. */
+export async function stockRegionOk(pkg) {
+  const region = pkg.image.subarray(1024 + 0x4000, 1024 + 0x93000);
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", region)), (b) => b.toString(16).padStart(2, "0")).join("");
+  return region.length === 0x8F000 && hash === V15_REGION_SHA256;
+}
 
 // Felucca INFO decoding, adapted from Felucca web/index_pkg.html archiveInfo() (GPL-3.0-only).
 export function feluccaInfo(a) {
@@ -212,8 +234,10 @@ export function createInstaller(deps) {
     ui.backupRun.hidden = !["fm4", "open", "felucca"].includes(needs);
     ui.backupRun.disabled = busy || state.phase !== "connected";
     ui.ackBox.hidden = needs !== "stock";
+    const oldFm4 = needs === "fm4" && state.mode === "stock" && !fm4CanPrepare(c.info);
+    ui.oldFm4Box.hidden = !oldFm4;
     ui.haveBox.hidden = needs !== "resume";
-    ui.backupText.textContent = needs ? BACKUP_TEXT[needs] || "" : "";
+    ui.backupText.textContent = needs ? (BACKUP_TEXT[needs] || "") + (needs === "fm4" && state.mode === "stock" ? STOCK_FROM_FM4_TEXT : "") : "";
     if (needs === "stock" || needs === "resume") {
       const box = needs === "stock" ? ui.ack : ui.have;
       if (!busy && (state.phase === "connected" || state.phase === "backedup")) {
@@ -264,6 +288,9 @@ export function createInstaller(deps) {
       try { state.pkgs.stock = await FM1Web.prepare(resolve(FALLBACK_STOCK)); }
       catch (e2) { log(`stock: ${e2.message}`); }
     }
+    if (state.pkgs.stock && !(await stockRegionOk(state.pkgs.stock).catch(() => false))) {
+      log("stock: the firmware region is not V15's (0x4000..0x92FFF hash)"); state.pkgs.stock = null;
+    }
     state.phase = "idle";
     renderPackage(); refresh();
   }
@@ -276,6 +303,7 @@ export function createInstaller(deps) {
     state.device = null; state.backup = null; state.phase = state.phase === "load" ? "load" : "idle";
     ui.device.textContent = "Not connected";
     if (ui.ack) ui.ack.checked = false;
+    if (ui.oldFm4) ui.oldFm4.checked = false;
     if (ui.have) ui.have.checked = false;
     ui.backupStatus.textContent = "";
   }
@@ -335,6 +363,9 @@ export function createInstaller(deps) {
     clearError(); setBusy(true);
     const say = (s) => { ui.backupStatus.textContent = s; };
     try {
+      const toStock = state.mode === "stock" && c.kind === "fm4";
+      if (toStock && !fm4CanPrepare(c.info) && !ui.oldFm4.checked)
+        throw fail("oldfm4", `${c.info || "This FM-4"} cannot confirm that its songs are out of stock V15's settings area.`);
       let file;
       if (c.kind === "fm4") file = await backupFm4(say);
       else if (c.kind === "open") file = await backupOpen(say);
@@ -344,9 +375,11 @@ export function createInstaller(deps) {
       await download(file.name, file.data, file.type);
       // Re-parse what was handed to the browser before unlocking Install.
       file.verify(file.data);
-      state.backup = { kind: c.kind, name: file.name, bytes: file.data.length, summary: file.summary };
+      let prepared = "";
+      if (toStock) prepared = await prepareForStock(c, say);
+      state.backup = { kind: c.kind, name: file.name, bytes: file.data.length, summary: file.summary, prepared };
       state.phase = "backedup";
-      say(`Backup saved and verified: ${file.name}, ${file.summary}. Keep this file.`);
+      say(`Backup saved and verified: ${file.name}, ${file.summary}. Keep this file.${prepared ? " " + prepared : ""}`);
     } catch (e) {
       say("");
       showError(e.code && e.code in ERRORS ? e : fail("backup", t(e.message)));
@@ -373,6 +406,24 @@ export function createInstaller(deps) {
         p.voices.forEach((v, i) => { if (v.slot !== i || v.record.some((b, k) => b !== records[i][k])) throw new Error(`Voice ${i + 1} differs after reading the file back.`); });
       };
       return { name: `FM-4-user-voices-${today()}.syx`, type: "application/octet-stream", data, verify, summary: "100 user voices" };
+    } finally { await link.close(); }
+  }
+
+  /** FM-4 -> stock: have the FM-4 erase/verify its data outside its storage window (PREPARE_STOCK). */
+  async function prepareForStock(c, say) {
+    if (!fm4CanPrepare(c.info)) {
+      log(`prepare: ${c.info || "no INFO"} has no PREPARE_STOCK; the user confirmed that songs 3-8 were never saved`);
+      return "This FM-4 build cannot check its data; you confirmed that songs 3–8 were never saved.";
+    }
+    const { input, output } = state.ports;
+    const link = portLink(input, output);
+    try {
+      say("Asking the FM-4 to clear its data out of stock V15's settings area…");
+      const r = await new Fm4Device(link, { timeout: timing.ext ?? 1000 }).prepareStock({ timeout: timing.prepare ?? 30000 });
+      log(`prepare: ${r ? `status ${r.status}, ${r.erased} sectors erased, ${r.remaining} remaining` : "no reply"}`);
+      if (!r) throw fail("prepare", "The FM-4 did not answer PREPARE_STOCK.");
+      if (!r.ok) throw fail("prepare", r.status === 2 ? "The FM-4 reports that its storage is unavailable." : `${r.remaining} FM-4 record(s) are still in stock's area${r.status === 1 && !r.remaining ? " (an erase failed)" : ""}.`);
+      return r.erased ? `The FM-4 erased ${r.erased} old song sector(s) from stock's settings area; nothing of FM-4 is left there.` : "The FM-4 confirmed that none of its data is in stock V15's settings area.";
     } finally { await link.close(); }
   }
 
@@ -518,6 +569,7 @@ export const IDS = {
   connect: "inst-connect", device: "inst-device",
   backupBox: "inst-backup", backupText: "inst-backup-text", backupRun: "inst-backup-run", backupStatus: "inst-backup-status",
   ackBox: "inst-ack-box", ack: "inst-ack", haveBox: "inst-have-box", have: "inst-have",
+  oldFm4Box: "inst-oldfm4-box", oldFm4: "inst-oldfm4",
   install: "inst-install", progress: "inst-progress", phase: "inst-phase",
   error: "inst-error", errorTitle: "inst-error-title", errorDetail: "inst-error-detail", errorRecovery: "inst-error-recovery",
   confirm: "inst-confirm", confirmFrom: "inst-confirm-from", confirmTo: "inst-confirm-to", confirmTypedBox: "inst-confirm-typed-box",
@@ -556,6 +608,7 @@ export function mount(doc, overrides = {}) {
   ui.backupRun.addEventListener("click", () => ctl.runBackup());
   ui.ack.addEventListener("change", () => ctl.refresh());
   ui.have.addEventListener("change", () => ctl.refresh());
+  ui.oldFm4.addEventListener("change", () => ctl.refresh());
   ui.install.addEventListener("click", () => ctl.openConfirm());
   ui.confirmTyped.addEventListener("input", () => ctl.typedChanged());
   ui.confirmGo.addEventListener("click", () => ctl.install());

@@ -33,9 +33,25 @@ Checksums are `(-sum) & 0x7F`; for the `7E` "LM" blocks the sum includes the 10 
 | STORE | `F0 7D 46 34 01 part slot F7` — store the part's edit buffer to USER `slot` (0–99) | `F0 7D 46 34 41 status slot F7` (status 0 = ok) |
 | READ | `F0 7D 46 34 02 slot F7` | the 191-byte TQ5 voice dump of USER `slot` |
 | SELECT | `F0 7D 46 34 03 part bank program F7` (bank 0 PRESET, 1 USER) | — |
-| INFO | `F0 7D 46 34 04 F7` | `F0 7D 46 34 44 "FM-4 1.0 TQ5" F7` |
+| INFO | `F0 7D 46 34 04 F7` | `F0 7D 46 34 44 "FM-4 1.1 TQ5" F7` (the version after `FM-4`) |
+| PREPARE_STOCK (FM-4 1.1+) | `F0 7D 46 34 05 53 54 4F 43 4B F7` (`05 "STOCK"`) | `F0 7D 46 34 45 status erased remaining F7` |
 
 Send one request at a time and wait for the reply.
+
+**PREPARE_STOCK** is sent by the webapp right before it restores stock V15. FM-4 stops the
+sequencer, erases every FM-4 1.0 song record that lies outside FM-4's storage window (FM-4 1.0
+kept songs 3–8 at flash 0x93000–0xC8FFF, inside stock V15's settings store), then scans that area
+again for any FM-4 record header.
+
+- `status`: 0 = no FM-4 data outside the window (safe to restore stock), 1 = an erase failed or
+  FM-4 data remains, 2 = storage unavailable (the SDK reported an unexpected user partition).
+- `erased`: sectors erased (clamped to 127). `remaining`: FM-4 record headers still found.
+- Only sectors that carry an FM-4 layout-1 song header are erased; stock's own data is never
+  touched. The five-letter word guards against accidental triggering; anything else is ignored.
+- FM-4 1.0 does not answer. It can take several seconds (each erased sector stalls audio
+  briefly); wait up to 30 s.
+- FM-4's own data inside the window (settings, user voices, songs) is not erased: the stock
+  image overwrites that area when it is installed. Back up the user voices first.
 
 ## Not compatible
 
