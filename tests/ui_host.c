@@ -140,4 +140,6 @@ int main(void)
 }
 uint32_t fm4_audio_block_ticks(void) { return 1000; }
 void fm4_audio_stats_reset_peak(void) {}
+uint32_t fm4_audio_render_peak(void) { return 300; }
+uint32_t fm4_audio_late_blocks(void) { return 0; }
 void fm1_audio_stats_read(struct fm1_audio_stats *s) { memset(s, 0, sizeof *s); s->peak_ticks = 420; }

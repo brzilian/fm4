@@ -70,6 +70,31 @@ int main(void)
     midi3(0x90, 60, 100); midi3(0xe0, 0x7f, 0x7f); run(1);
     int bend = 0; for (unsigned s = 0; s < 8; ++s) if (m.eng.v[s].active) bend = m.eng.v[s].bend64;
     CHECK(bend > 760 && bend <= 768, "bend +12 st = %d", bend);
+    multi_all_off(&m, 1); run(1);
+
+    /* CPU governor: overload sheds the oldest voice with a fast fade (no
+     * hard cut, no settings change) and caps new allocations; calm restores. */
+    m.part[0].data.perf.pb_range = 2; m.part[0].cfg.reserve = 8;
+    for (int n = 0; n < 6; ++n) midi3(0x90, (uint8_t)(60 + n), 100);
+    run(4);
+    CHECK(multi_active_voices(&m) == 6, "six voices %u", multi_active_voices(&m));
+    unsigned oldest = 0; for (unsigned s = 0; s < 8; ++s) if (m.eng.v[s].active && m.eng.v[s].note == 60) oldest = s;
+    multi_governor(900, 1000);                    /* 90 % of the block */
+    run(1);
+    CHECK(!m.eng.v[oldest].keyed && m.eng.v[oldest].active, "oldest voice fading, not cut");
+    CHECK(m.gov_shed == 1 && m.eng.voices == 8, "shed once, polyphony setting untouched");
+    run(20);                                      /* ~58 ms: fast release done */
+    CHECK(!m.eng.v[oldest].active, "shed voice finished");
+    CHECK(multi_active_voices(&m) == 5, "five left %u", multi_active_voices(&m));
+    for (int n = 0; n < 4; ++n) midi3(0x90, (uint8_t)(80 + n), 100);
+    CHECK(multi_active_voices(&m) <= 5, "cap holds new notes to 5 (%u)", multi_active_voices(&m));
+    multi_governor(900, 1000); run(1);            /* inside the 16-block hold: no second shed */
+    CHECK(m.gov_shed == 1, "rate limited (%u)", (unsigned)m.gov_shed);
+    for (int b = 0; b < 3 * 344; ++b) multi_governor(100, 1000);   /* 3 s calm */
+    multi_all_off(&m, 1); run(1);
+    for (int n = 0; n < 8; ++n) midi3(0x90, (uint8_t)(60 + n), 100);
+    CHECK(multi_active_voices(&m) == 8, "polyphony restored (%u)", multi_active_voices(&m));
+    multi_all_off(&m, 1);
 
     printf(failures ? "%d FAILURES\n" : "all multi tests passed\n", failures);
     return failures ? 1 : 0;

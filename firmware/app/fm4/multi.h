@@ -65,6 +65,7 @@ typedef struct {
     uint8_t master_volume;           /* 0..127 */
     int8_t master_tune;              /* -64..+63 in ~1.2 cent steps */
     uint8_t single_mode;             /* 1: part 0 only, omni-ish TQ5 single */
+    uint32_t gov_shed;               /* voices shed by the CPU governor */
 } multi_state;
 
 void multi_init(multi_state *m, unsigned polyphony);
@@ -76,6 +77,9 @@ FM4_AUDIO_CODE void multi_midi(multi_state *m, const uint8_t *msg, unsigned len)
 FM4_AUDIO_CODE void multi_note(multi_state *m, unsigned part, unsigned note, unsigned velocity);
 FM4_AUDIO_CODE void multi_all_off(multi_state *m, int hard);
 FM4_AUDIO_CODE void multi_render(multi_state *m, int32_t *dry, int32_t *send);
+/* Audio interrupt, once per block after rendering: CPU governor input. used
+ * and budget are the FM-4 render time and the block period, same units. */
+FM4_AUDIO_CODE void multi_governor(uint32_t used, uint32_t budget);
 /* Which parts listen on channel ch (bit mask). */
 FM4_AUDIO_CODE unsigned multi_parts_for_channel(const multi_state *m, unsigned ch);
 unsigned multi_active_voices(const multi_state *m);

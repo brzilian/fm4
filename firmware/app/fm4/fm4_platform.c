@@ -3,7 +3,15 @@
 #include "fm4_core.h"
 #include "fm1.h"
 
-uint32_t fm4_hw_flash_size(void) { return fm1_flash_size(); }
+/* FM-4's storage window (fm4_core.h) is placed by user offset. Its flash
+ * address is only known for the partition size every fm1_open image uses
+ * (0x7C000..0xFEFFF). Any other size means another layout: report no
+ * storage rather than guess where stock V15's data would be. */
+uint32_t fm4_hw_flash_size(void)
+{
+    uint32_t n = fm1_flash_size();
+    return n == FM4_USER_PARTITION_BYTES ? n : 0;
+}
 int fm4_hw_flash_read(uint32_t off, void *data, size_t n) { return fm1_flash_read(off, data, n); }
 int fm4_hw_flash_erase(uint32_t off) { return fm1_flash_erase(off); }
 int fm4_hw_flash_write(uint32_t off, const void *data, size_t n) { return fm1_flash_write(off, data, n); }

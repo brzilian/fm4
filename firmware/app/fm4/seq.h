@@ -56,7 +56,7 @@ typedef struct {
 
 void seq_init(seq_state *s, seq_song *song, seq_emit_fn emit, void *ctx);
 void seq_song_clear(seq_song *song, unsigned number);
-uint32_t seq_song_ticks(const seq_song *song);
+FM4_AUDIO_CODE uint32_t seq_song_ticks(const seq_song *song);
 /* Control task. */
 void seq_play(seq_state *s);
 void seq_record(seq_state *s, unsigned track);

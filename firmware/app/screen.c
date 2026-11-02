@@ -268,7 +268,9 @@ static volatile unsigned keepalive_never;
 /* CPU meter (board/audio.c); the host harness provides stubs. */
 uint32_t fm4_audio_block_ticks(void);
 void fm4_audio_stats_reset_peak(void);
-static unsigned cpu_peak_pct, cpu_overruns;
+uint32_t fm4_audio_render_peak(void);
+uint32_t fm4_audio_late_blocks(void);
+static unsigned cpu_peak_pct, cpu_fm4_pct, cpu_overruns, cpu_late;
 static uint32_t cpu_seen_overruns, cpu_at;     /* see keep_sdk_alive() */
 
 static fm4_system *S(void) { return fm4_sys(); }
@@ -609,6 +611,8 @@ static void draw(void)
         strcpy(s, "CPU PEAK "); fmt_uint(s + strlen(s), cpu_peak_pct, 1); strcat(s, "%"); text(16, 116, s, 1, cpu_peak_pct > 85 ? RED : cpu_peak_pct > 70 ? AMBER : GREEN);
         strcpy(s, "OVERRUNS "); fmt_uint(s + strlen(s), cpu_overruns, 1); text(16, 132, s, 1, cpu_overruns ? RED : DIM);
         fill(16, 146, 102, 8, PANEL); fill(17, 147, cpu_peak_pct > 100 ? 100 : cpu_peak_pct, 6, cpu_peak_pct > 85 ? RED : GREEN);
+        strcpy(s, "FM4 "); fmt_uint(s + strlen(s), cpu_fm4_pct, 1); strcat(s, "% LATE "); fmt_uint(s + strlen(s), cpu_late, 1);
+        text(16, 160, s, 1, DIM);
         break;
     case PG_SAVE: {
         text(16, 34, "STORE VOICE TO USER", 1, DIM);
@@ -934,12 +938,18 @@ void groove_screen_control(void)
         struct fm1_audio_stats st; fm1_audio_stats_read(&st);
         uint32_t bt = fm4_audio_block_ticks();
         cpu_peak_pct = bt ? (unsigned)((uint64_t)st.peak_ticks * 100U / bt) : 0;
+        cpu_fm4_pct = bt ? (unsigned)((uint64_t)fm4_audio_render_peak() * 100U / bt) : 0;
+        cpu_late = fm4_audio_late_blocks();
         fm4_audio_stats_reset_peak();
         if (st.overruns != cpu_seen_overruns) {
             cpu_overruns += st.overruns - cpu_seen_overruns;
             cpu_seen_overruns = st.overruns;
-            /* CPU guard: shed polyphony instead of glitching */
-            if (S()->polyphony > 4) { --S()->polyphony; fm4_apply_system(); fm4_mark_dirty(); show("CPU GUARD: VOICES -1"); }
+            /* Report only. The old guard lowered sys.polyphony here, which
+             * cut every sounding note (ST_PANIC) and marked the settings
+             * dirty, so each overrun was followed by a Flash save 2 s later:
+             * another dropout, and more overruns. Load shedding now happens
+             * in the audio path (multi_governor) without touching settings. */
+            if (page == PG_GLO) changed = 1;
         }
         cpu_at = now;
     }

@@ -87,35 +87,28 @@ FM4_AUDIO_CODE void fx_render(fx_unit *f, const int32_t *send, int32_t *mix)
             f->dc_l += (l - f->dc_l) >> 7; f->dc_r += (r - f->dc_r) >> 7;
             l -= f->dc_l; r -= f->dc_r;
         }
-        switch (algo) {
-        case FX_ALGO_DIST:
-            ol = l; or_ = r; break;
-        case FX_ALGO_REVERB:
-        case FX_ALGO_DIST_REVERB: {
+        /* if-chain, not switch: an 11-way switch compiles to a jump table in
+         * .rodata (Flash), read once per sample from the audio interrupt. */
+        if (algo == FX_ALGO_REVERB || algo == FX_ALGO_DIST_REVERB) {
             int32_t rl, rr; reverb(f, (l + r) >> 2, &rl, &rr);
             ol = rl; or_ = rr;
             if (algo == FX_ALGO_DIST_REVERB) { ol += l; or_ += r; }
-            break;
-        }
-        case FX_ALGO_DELAY:
-        case FX_ALGO_DIST_DELAY: {
+        } else if (algo == FX_ALGO_DIST) {
+            ol = l; or_ = r;
+        } else if (algo == FX_ALGO_DELAY || algo == FX_ALGO_DIST_DELAY) {
             uint32_t rd = (f->dpos - (uint32_t)f->delay_len) & mask;
             int32_t y = f->dl[rd];
             f->dl[f->dpos & mask] = (int16_t)sat16(((l + r) >> 1) + ((y * f->feedback) >> 15));
             ol = or_ = y;
             if (algo == FX_ALGO_DIST_DELAY) { ol += l; or_ += r; }
-            break;
-        }
-        case FX_ALGO_PINGPONG: {
+        } else if (algo == FX_ALGO_PINGPONG) {
             const uint32_t rmask = FX_DELAY_R_SAMPLES - 1;
             uint32_t len = (uint32_t)f->delay_len > rmask ? rmask : (uint32_t)f->delay_len;
             int32_t yl = f->dl[(f->dpos - len) & mask], yr = f->dr[(f->dpos - len) & rmask];
             f->dl[f->dpos & mask] = (int16_t)sat16(((l + r) >> 1) + ((yr * f->feedback) >> 15));
             f->dr[f->dpos & rmask] = (int16_t)sat16((yl * f->feedback) >> 15);
             ol = yl; or_ = yr;
-            break;
-        }
-        case FX_ALGO_CHORUS: {
+        } else if (algo == FX_ALGO_CHORUS) {
             /* two taps, 7..(7+depth) ms, triangle LFO in quadrature */
             f->lfo += 120U + (uint32_t)f->p.time * 4U;
             uint32_t ph = f->lfo >> 8;
@@ -131,16 +124,11 @@ FM4_AUDIO_CODE void fx_render(fx_unit *f, const int32_t *send, int32_t *mix)
                 int32_t y = a + (((b - a) * (int32_t)(fr >> 2)) >> 14);
                 if (k) or_ = y; else ol = y;
             }
-            break;
-        }
-        case FX_ALGO_DELAY_LR: {
+        } else if (algo == FX_ALGO_DELAY_LR) {
             f->dl[f->dpos & mask] = (int16_t)((l + r) >> 1);
             ol = f->dl[(f->dpos - (uint32_t)f->delay_len) & mask];
             or_ = f->dl[(f->dpos - (uint32_t)(f->delay_len * 2 / 3)) & mask];
-            break;
-        }
-        case FX_ALGO_GATE:
-        case FX_ALGO_REVERSE: {
+        } else if (algo == FX_ALGO_GATE || algo == FX_ALGO_REVERSE) {
             /* 12 taps spread over the gate time; flat (gate) or rising (reverse)
              * gains, alternated between the sides, then lightly diffused. */
             f->dl[f->dpos & mask] = (int16_t)((l + r) >> 1);
@@ -153,9 +141,6 @@ FM4_AUDIO_CODE void fx_render(fx_unit *f, const int32_t *send, int32_t *mix)
             }
             int32_t rl, rr; reverb(f, (accl + accr) >> 2, &rl, &rr);
             ol = accl + (rl >> 1); or_ = accr + (rr >> 1);
-            break;
-        }
-        default: break;
         }
         f->dpos++;
         mix[2 * s] += ((ol * wet) >> 15) << 8;

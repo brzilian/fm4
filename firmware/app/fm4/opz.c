@@ -187,6 +187,18 @@ FM4_AUDIO_CODE void opz_key_off(opz_engine *e, unsigned slot)
         if (v->o[i].state < EG_RELEASE) v->o[i].state = EG_RELEASE;
 }
 
+FM4_AUDIO_CODE void opz_fast_release(opz_engine *e, unsigned slot)
+{
+    if (slot >= OPZ_MAX_VOICES || !e->v[slot].active) return;
+    opz_voice *v = &e->v[slot];
+    v->keyed = 0;
+    for (unsigned i = 0; i < 4; ++i) {
+        /* ~10 ms to silence: fast enough to free the slot, slow enough not to click */
+        v->o[i].rate[EG_RELEASE] = v->o[i].rate[EG_REVERB] = 60;
+        if (v->o[i].state < EG_RELEASE) v->o[i].state = EG_RELEASE;
+    }
+}
+
 FM4_AUDIO_CODE void opz_kill(opz_engine *e, unsigned slot)
 {
     if (slot >= OPZ_MAX_VOICES) return;
@@ -256,17 +268,18 @@ static FM4_AUDIO_CODE void lfo_block(opz_engine *e)
         l->counter += step * (OPZ_LFO_BLOCK_X64 >> 6) + ((step * (OPZ_LFO_BLOCK_X64 & 63U)) >> 6);
         unsigned idx = (l->counter >> 22) & 0xff;
         unsigned am, pm;
-        switch (l->wave) {
-        case 0: am = idx ^ 0xff; pm = idx; break;                       /* saw up */
-        case 1: am = (idx & 0x80) ? 0 : 0xff; pm = am ^ 0x80; break;    /* square */
-        case 2: am = ((idx & 0x80) ? idx : idx ^ 0xff) << 1 & 0xff;     /* triangle */
-                pm = (idx & 0x40) ? am : (~am & 0xff); break;
-        default:                                                         /* S&H */
+        /* if-chain, not switch: a jump table would live in .rodata (Flash) */
+        if (l->wave == 0) { am = idx ^ 0xff; pm = idx; }                      /* saw up */
+        else if (l->wave == 1) { am = (idx & 0x80) ? 0 : 0xff; pm = am ^ 0x80; } /* square */
+        else if (l->wave == 2) {                                             /* triangle */
+            am = ((idx & 0x80) ? idx : idx ^ 0xff) << 1 & 0xff;
+            pm = (idx & 0x40) ? am : (~am & 0xff);
+        } else {                                                             /* S&H */
             if ((idx >> 4) != (l->last_index >> 4)) {
                 l->noise = l->noise * 1664525U + 1013904223U;
                 l->sh_value = (uint8_t)(l->noise >> 24);
             }
-            am = pm = l->sh_value; break;
+            am = pm = l->sh_value;
         }
         l->last_index = (uint8_t)idx;
         unsigned pmd = l->pmd + lfo_extra_pm[n], amd = l->amd + lfo_extra_am[n];
@@ -391,7 +404,8 @@ unsigned opz_ratio_x100(unsigned crs, unsigned fine)
     return (m16 * dt2_x1000[dt2] + 80U) / 160U;
 }
 
-unsigned opz_fixed_hz(unsigned crs, unsigned fixrg, unsigned fine)
+/* Called from opz_key_on (audio interrupt) for fixed-frequency operators. */
+FM4_AUDIO_CODE unsigned opz_fixed_hz(unsigned crs, unsigned fixrg, unsigned fine)
 {
     unsigned base = (crs & 63) < 4 ? 8U + ((fine & 15) > 7 ? 7U : (fine & 15))
                                     : 16U * ((crs & 63) >> 2) + (fine & 15);

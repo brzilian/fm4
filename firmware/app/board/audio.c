@@ -15,6 +15,8 @@ static struct fm1_audio_stats statistics;
 static uint32_t block_ticks, previous_tick;
 static uint8_t initialized, previous_valid;
 static volatile unsigned mute_depth;
+/* FM-4 diagnostics: late-but-rendered blocks, FM-4 render peak (ticks). */
+static uint32_t late_blocks, fm4_peak;
 
 static inline __attribute__((always_inline)) uint32_t elapsed(uint32_t start, uint32_t end)
 {
@@ -30,16 +32,29 @@ FM1_AUDIO_CODE __attribute__((interrupt(""))) void fm1_audio_irq(void)
 {
     uint8_t pending = fm1_audio_pending();
     unsigned rx = pending & 1U;
-    uint32_t start = FM1_AUDIO_TIMER_COUNT, interval, used;
+    uint32_t start = FM1_AUDIO_TIMER_COUNT, interval, used, late;
     unsigned half, committed = 0;
     fm1_audio_ack(pending);
     if (!rx || mute_depth) return;
     if (!previous_valid) { previous_tick = start; previous_valid = 1; return; }
     interval = elapsed(previous_tick, start);
     if (interval < 80000U) { ++statistics.short_intervals; return; }
-    previous_tick = start;
+    /* FM-4: an interrupt that starts late (another interrupt or a masked
+     * section held it off) still has most of a block before its half is
+     * played. Render it with a shorter commit window instead of dropping it,
+     * and keep measuring from the expected tick so the next, on-time block
+     * is not rejected as "short". Only a missed whole block resynchronises. */
+    late = 0;
+    if (interval > block_ticks + (block_ticks >> 3)) {
+        late = interval - block_ticks;
+        if (late >= block_ticks) {               /* a whole block was missed */
+            previous_tick = start; ++statistics.overruns; return;
+        }
+        previous_tick = start >= late ? start - late : start + FM1_AUDIO_TIMER_PERIOD + 1U - late;
+        if (late >= block_ticks >> 1) { ++statistics.overruns; return; }  /* no time left */
+        ++late_blocks;
+    } else previous_tick = start;
     if (interval < block_ticks - (block_ticks >> 3)) { ++statistics.short_intervals; return; }
-    if (interval > block_ticks + (block_ticks >> 3)) { ++statistics.overruns; return; }
     half = fm1_audio_free_half();
     /* The library renders the instrument; APP mixes external audio. */
     if (fm1_engine_render(rendered, FM1_BLOCK_FRAMES) != 0) {
@@ -49,12 +64,16 @@ FM1_AUDIO_CODE __attribute__((interrupt(""))) void fm1_audio_irq(void)
     /* FM-4: the stock groove instrument is idle (all tracks OFF) but still
      * rendered, which keeps the SDK's audio code linked and its timing
      * statistics valid. FM-4's TQ5 engine is added on top. */
+    uint32_t fm4_start = FM1_AUDIO_TIMER_COUNT;
     fm4_core_render(fm4_block);
+    uint32_t fm4_used = elapsed(fm4_start, FM1_AUDIO_TIMER_COUNT);
+    if (fm4_used > fm4_peak) fm4_peak = fm4_used;
+    multi_governor(fm4_used, block_ticks);
     for (unsigned i = 0; i < FM1_BLOCK_WORDS; ++i) rendered[i] += fm4_block[i];
     fm1_output_mix(rendered);
     uint32_t flags = fm1_audio_irq_save();
     if (fm1_audio_half_owned(half) &&
-        elapsed(start, FM1_AUDIO_TIMER_COUNT) < block_ticks - (block_ticks >> 3)) {
+        elapsed(start, FM1_AUDIO_TIMER_COUNT) + late < block_ticks - (block_ticks >> 3)) {
         fm1_audio_copy(transmit[half], rendered);
         committed = fm1_audio_half_owned(half);
     }
@@ -123,8 +142,12 @@ void fm4_audio_stats_reset_peak(void)
 {
     uint32_t flags = fm1_device_irq_save();
     statistics.peak_ticks = 0;
+    fm4_peak = 0;
     fm1_device_irq_restore(flags);
 }
+/* FM-4 render peak since the last reset, and late blocks that were rescued. */
+uint32_t fm4_audio_render_peak(void) { return fm4_peak; }
+uint32_t fm4_audio_late_blocks(void) { return late_blocks; }
 void fm1_audio_stats_read(struct fm1_audio_stats *out)
 {
     if (!out) return;

@@ -10,7 +10,7 @@
 #include "fx.h"
 #include "presets_bank.h"
 
-#define FM4_VERSION "1.0"
+#define FM4_VERSION "1.1"         /* 1.1: storage layout 2 (see fm4_core.c), PREPARE_STOCK */
 #define FM4_BANK_PRESET 0
 #define FM4_BANK_USER 1
 #define FM4_PARTS MULTI_PARTS
@@ -24,8 +24,35 @@ enum {
     FM4X_READ = 0x02,       /* F0 7D 46 34 02 slot F7: load user slot into part 0, reply 191-byte dump */
     FM4X_SELECT = 0x03,     /* F0 7D 46 34 03 part bank program F7 */
     FM4X_INFO = 0x04,       /* F0 7D 46 34 04 F7 -> F0 7D 46 34 44 <ascii "FM-4 x.y"> F7 */
+    /* F0 7D 46 34 05 'S' 'T' 'O' 'C' 'K' F7: before returning to stock V15, erase every FM-4
+     * record found outside the FM-4 storage window (legacy layout-1 songs that sit in stock's
+     * settings store) and re-check. -> F0 7D 46 34 45 status erased remaining F7
+     * status 0 = no FM-4 data outside the window, 1 = an erase failed or data remains,
+     * 2 = storage unavailable. erased/remaining are sector/record counts (clamped to 127). */
+    FM4X_PREPARE_STOCK = 0x05,
     FM4X_REPLY = 0x40       /* reply flag (cmd | 0x40) */
 };
+
+/* ---- Persistent storage (layout 2) ---------------------------------------
+ * The SDK user partition (fm1_flash_*) is flash 0x7C000..0xFEFFF on every
+ * fm1_open-built image (Package.cs: FlashLimit 0xFF000 - UserSize 536576).
+ * Stock V15 keeps its own data in 0x93000..0xFEFFF (settings store 0x93000..
+ * 0xE8FFF, Bluetooth 0xE9000, factory voices 0xEA000..0xFBFFF), i.e. at user
+ * offsets >= 0x17000. Offsets 0..0x16FFF (flash 0x7C000..0x92FFF) lie inside
+ * the stock firmware image, which every stock restore rewrites. FM-4 keeps all
+ * of its data in that window, so it never writes where stock keeps data and
+ * leaves nothing behind when stock is restored. */
+#define FM4_USER_PARTITION_BYTES 536576U   /* fm1_layout.user_bytes (Build.ps1) */
+#define FM4_FLASH_WINDOW 0x17000U          /* 0x93000 - 0x7C000 */
+#define FM4_LAYOUT_VERSION 2U
+/* Saved song capacity (events) in layout 2: one 8 KiB slot per song. */
+#define FM4_SONG_SLOT_BYTES 0x2000U
+int fm4_storage_layout(void);             /* 2 when layout 2 is in place, else 0 */
+unsigned fm4_song_capacity(void);         /* events a saved song can hold */
+/* Control task: erase FM-4 records outside the window. Returns the reply
+ * status (0 clean, 1 failed/remaining, 2 unavailable); *erased, *remaining
+ * receive the counts. */
+int fm4_prepare_stock(unsigned *erased, unsigned *remaining);
 
 typedef struct {
     uint8_t version;
