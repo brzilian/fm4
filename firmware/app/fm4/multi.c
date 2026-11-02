@@ -18,6 +18,9 @@ void multi_init(multi_state *m, unsigned polyphony)
         pt->cfg.note_lo = 0; pt->cfg.note_hi = 127;
         pt->cfg.volume = 90; pt->cfg.pan = 64; pt->cfg.fx_send = 40;
         pt->cc_volume = 100; pt->expression = 127;
+        /* No foot controller seen yet = pedal fully open. With 0 here, every
+         * voice with VCED FC VOL 99 (common in real TQ5/TX81Z banks) was mute. */
+        pt->foot = 127;
         pt->data.perf.pb_range = 2; pt->data.perf.transpose = 24;
     }
     memset(m->slot_part, NO_PART, sizeof m->slot_part);

@@ -273,6 +273,8 @@ Common bytes:
 
 Sources: bytes 0-83 are [CONFIRMED TXP txpack.c and EDISYN, which agree]. TXP lists SYNC as byte 40 **bit 7**, which is impossible in 7-bit data. Edisyn uses bit 6, and that is the value to use. [YS-M p.67] fragment: "PEG PR1 ... PEG PL3 OP.4 -EGSFT- FIX -FIXRG" matches byte 73. Bytes 84-93 are [COMMUNITY EDISYN]. Note that Edisyn's VMEM AT code masks with `& 7`, which is a bug: store the full 7-bit values.
 
+**Observed in a real TQ5 100-voice bank dump (user-supplied, not redistributed):** bytes 0-83 match the table above. **FC VOL (byte 50) is 99 or 40 on most voices**, so the engine must treat "no CC4 received yet" as foot pedal fully open (127), or those voices are silent (FM-4 bug, fixed in multi.c). Bytes 84-89 are 0, byte 90 is 0/2/3 (varies per voice), byte 91 is always 1, bytes 92-94 are 0, byte 95 is 0x32 (50), byte 96 is 0x64 (100), and 97-127 are 0, including on INIT VOICE records. This does not match the Edisyn layout for bytes 84-93 (effect preset/time/balance at 91-93 would give every voice "Hall, time 0, balance 0"). The meaning of bytes 90, 95 and 96 is UNVERIFIED. FM-4 still decodes 84-93 as above, which leaves the dry sound unaffected, and does not keep bytes 90/94-96.
+
 ### 2.6 TQ5 100-voice bank bulk (4 blocks of 25 voices)
 
 The TQ5 holds 100 voices per bank, sent as four VMEM messages. Each is preceded by a block-select parameter change [COMMUNITY EDISYN emitBank/parse, tested on TQ5]:
@@ -384,6 +386,7 @@ Reception requires the SysEx receive switch on and memory protect off (TX81Z/Edi
 - **Program change:** PC 0-99 selects voice 00-99 within the currently selected bank [COMMUNITY EDISYN]. PC 100-127: UNVERIFIED; recommend ignoring them. There is no Bank Select CC (1988 design); banks change only through the panel or remote 116/117/118. Recommend optionally also accepting CC0 = 0/1/2 for preset/user/card as an extension. The V50's PC 122/123/124 bank trick is **not** a TQ5 behaviour.
 - **Channels:** basic receive channel 1-16 or omni; transmit channel 1-16 [REV: "OMNI or any channel for IN or OUT"]. In multi mode each of the 8 parts has its own receive channel (section 3.3).
 - **Polyphony:** 8 voices total (the YM2414 has 8 channels), shared across parts.
+- **Foot controller (CC4) default:** until a CC4 arrives, treat the pedal as fully open (127). Real voices commonly have FC VOL 99, and a default of 0 mutes them.
 - **Controllers recognised:** velocity, mod wheel (CC1), breath (CC2), foot controller (CC4), volume (CC7), sustain (CC64), channel aftertouch, pitch bend [REV]. Portamento CCs 5/65 are probably ignored. Data entry, NRPN and RPN: no. All of this list is UNVERIFIED in its CC numbers, which are the standard ones used by the TX81Z.
 - **Mono/poly mode messages:** CC126/127 should switch the VCED POLY/MONO flag (TX81Z behaviour, UNVERIFIED on TQ5).
 
