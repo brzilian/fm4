@@ -1,5 +1,7 @@
 # FM-4 webapp
 
+**Starting it:** on Windows double-click `Start FM-4 (Windows).bat` (uses PowerShell, no Python needed); on macOS double-click `Start FM-4.command`. Each serves this folder on `http://localhost:8041` (or the next free port) and opens the browser. Use Chrome or Edge.
+
 A static single page for desktop Chrome and Edge. It installs the FM-4 firmware, edits TQ5 voices
 and manages voice libraries for an M-VAVE FM-1 running FM-4. It uses plain HTML, CSS and ES modules
 with no build step, no dependencies and no CDN.
