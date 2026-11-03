@@ -10,7 +10,7 @@
 #include "fx.h"
 #include "presets_bank.h"
 
-#define FM4_VERSION "1.1"         /* 1.1: storage layout 2 (see fm4_core.c), PREPARE_STOCK */
+#define FM4_VERSION "1.2"         /* 1.1: storage layout 2, PREPARE_STOCK; 1.2: count-in, step entry, locate page, battery */
 #define FM4_BANK_PRESET 0
 #define FM4_BANK_USER 1
 #define FM4_PARTS MULTI_PARTS
@@ -108,8 +108,9 @@ void fm4_midi_out(const uint8_t *msg, size_t n); /* control task */
 seq_state *fm4_seq(void);
 int fm4_song_load(unsigned song);
 int fm4_song_save(void);
-void fm4_transport(unsigned action);         /* 0 stop, 1 play, 2 record active part's track */
-void fm4_record(unsigned track);             /* record onto a song track */
+void fm4_transport(unsigned action);         /* 0 stop, 1 play (armed: 4-beat count-in, then record), 2 record active part's track now */
+void fm4_record(unsigned track);             /* record onto a song track now (no count-in) */
+void fm4_arm(int track);                     /* arm a track for step entry / count-in recording; -1 disarms */
 /* Input from any context. */
 int fm4_post(const uint8_t *msg, unsigned n);        /* MIDI routing task */
 int fm4_post_local(const uint8_t *msg, unsigned n);  /* control task (panel) */

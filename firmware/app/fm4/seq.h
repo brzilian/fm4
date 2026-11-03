@@ -42,6 +42,8 @@ typedef void (*seq_emit_fn)(void *ctx, unsigned track, unsigned part,
 typedef struct {
     seq_song *song;
     uint8_t state, rec_track, metronome, ext_clock;
+    uint8_t armed;              /* REC pressed while stopped: rec_track armed (step entry) */
+    uint32_t countin;           /* SEQ_COUNTIN: ticks left before recording starts */
     uint32_t tick;              /* current position */
     uint32_t frac;              /* sub-tick accumulator (Q16) */
     uint16_t cursor;            /* next event index */
@@ -59,7 +61,15 @@ void seq_song_clear(seq_song *song, unsigned number);
 FM4_AUDIO_CODE uint32_t seq_song_ticks(const seq_song *song);
 /* Control task. */
 void seq_play(seq_state *s);
-void seq_record(seq_state *s, unsigned track);
+void seq_record(seq_state *s, unsigned track);          /* record now (punch in) */
+/* Record after a count-in of `beats` metronome clicks; the song position
+ * does not move during the count-in. beats 0 = record now. */
+void seq_record_countin(seq_state *s, unsigned track, unsigned beats);
+/* Step length for the song's quantize setting (quantize OFF: 1/16). */
+uint32_t seq_step_ticks(const seq_song *song);
+/* Step entry (control task, sequencer stopped): add a note of `len` ticks
+ * at `tick` on `track`, keeping the event list sorted. -1 when full. */
+int seq_step_insert(seq_state *s, uint32_t tick, unsigned track, uint8_t note, uint8_t vel, uint32_t len);
 void seq_stop(seq_state *s);           /* also releases sounding notes */
 void seq_locate(seq_state *s, uint32_t tick);
 /* Fold the recorded take into the song (quantized). Call from the control

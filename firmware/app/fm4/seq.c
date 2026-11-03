@@ -90,6 +90,61 @@ void seq_record(seq_state *s, unsigned track)
     s->state = SEQ_RECORDING;
 }
 
+void seq_record_countin(seq_state *s, unsigned track, unsigned beats)
+{
+    if (!beats) { seq_record(s, track); return; }
+    s->rec_track = (uint8_t)(track & 7);
+    s->rec_count = 0;
+    s->frac = 0;
+    locate_cursor(s);
+    s->clock_pulses = 0;
+    s->countin = (uint32_t)beats * SEQ_PPQ;
+    s->state = SEQ_COUNTIN;
+}
+
+uint32_t seq_step_ticks(const seq_song *song)
+{
+    unsigned g = quant_grid[song->quantize < 7 ? song->quantize : 0];
+    return g > 1 ? g : SEQ_PPQ / 4U;
+}
+
+/* index of the first event at tick >= t (lower) or > t (upper) */
+static unsigned bound(const seq_song *g, uint32_t t, int upper)
+{
+    unsigned lo = 0, hi = g->count;
+    while (lo < hi) {
+        unsigned mid = (lo + hi) >> 1, e = EV_TICK(&g->ev[mid]);
+        if (upper ? e <= t : e < t) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+}
+
+static void insert_at(seq_song *g, unsigned at, uint32_t tick, unsigned track, uint8_t st, uint8_t d1, uint8_t d2)
+{
+    memmove(&g->ev[at + 1], &g->ev[at], (g->count - at) * sizeof g->ev[0]);
+    g->ev[at].tick = (tick & TICK_MASK) | ((uint32_t)(track & 7) << 24);
+    g->ev[at].status = st; g->ev[at].d1 = d1; g->ev[at].d2 = d2; g->ev[at].pad = 0;
+    ++g->count;
+}
+
+int seq_step_insert(seq_state *s, uint32_t tick, unsigned track, uint8_t note, uint8_t vel, uint32_t len)
+{
+    seq_song *g = s->song;
+    uint32_t length = seq_song_ticks(g);
+    if (g->count + 2 > SEQ_MAX_EVENTS || !len) return -1;
+    tick %= length;
+    uint32_t off = tick + len;
+    if (off >= length) off = length - 1;          /* the note ends at the song end */
+    if (off <= tick) off = tick + 1 < length ? tick + 1 : tick;
+    unsigned part = g->track_part[track & 7] & 7;
+    /* note-on after anything already at its tick; note-off before, so a note
+     * that ends exactly where the next one starts is released first */
+    insert_at(g, bound(g, tick, 1), tick, track, (uint8_t)(0x90 | part), note & 127, vel ? vel : 1);
+    insert_at(g, bound(g, off, 0), off, track, (uint8_t)(0x80 | part), note & 127, 0);
+    locate_cursor(s);
+    return 0;
+}
+
 void seq_stop(seq_state *s)
 {
     if (s->state == SEQ_STOPPED) return;
@@ -127,6 +182,18 @@ static FM4_AUDIO_CODE void metronome(seq_state *s, uint32_t from, uint32_t to)
 static FM4_AUDIO_CODE void advance(seq_state *s, uint32_t ticks)
 {
     uint32_t length = seq_song_ticks(s->song);
+    while (ticks && s->state == SEQ_COUNTIN) {
+        /* count-in: clicks on every beat, the song position stays put */
+        if (s->countin % SEQ_PPQ == 0) {
+            unsigned down = s->countin == 4U * SEQ_PPQ;
+            s->beat_flash = (uint8_t)(down ? 2 : 1);
+            s->emit(s->ctx, SEQ_TRACKS, 0, 0x99, (uint8_t)(down ? 77 : 76), (uint8_t)(down ? 110 : 80));
+        }
+        uint32_t step = s->countin % SEQ_PPQ ? s->countin % SEQ_PPQ : SEQ_PPQ;
+        if (step > ticks) step = ticks;
+        s->countin -= step; ticks -= step;
+        if (!s->countin) s->state = SEQ_RECORDING;   /* the recording's first beat clicks in metronome() */
+    }
     while (ticks && s->state != SEQ_STOPPED) {
         uint32_t room = length - s->tick, step = ticks < room ? ticks : room;
         uint32_t from = s->tick;

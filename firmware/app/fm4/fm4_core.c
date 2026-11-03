@@ -389,9 +389,43 @@ void fm4_record(unsigned track)
     seq_record(&seq, track & 7);
 }
 
+/* Arm a track (REC while stopped). While armed and stopped, notes for the
+ * active part are step-entered at the playhead; PLAY starts a 4-beat
+ * count-in and records in real time. track < 0 disarms. */
+static uint8_t step_held[16], step_count;
+static uint32_t step_tick;
+void fm4_arm(int track)
+{
+    fm4_zero(step_held, sizeof step_held); step_count = 0;
+    if (track < 0) { seq.armed = 0; return; }
+    seq.rec_track = (uint8_t)(track & 7);
+    seq.armed = 1;
+}
+
+/* Control task: a note for the active part while armed and stopped. Keys
+ * pressed together form a chord on one step; the playhead moves one step
+ * (the song's quantize value) when the last key of the chord is released. */
+static void step_event(uint8_t status, uint8_t note, uint8_t vel)
+{
+    if (!seq.armed || seq.state != SEQ_STOPPED) return;
+    unsigned kind = status & 0xF0;
+    note &= 127;
+    uint8_t bit = (uint8_t)(1U << (note & 7));
+    if (kind == 0x90 && vel) {
+        if (step_held[note >> 3] & bit) return;
+        if (!step_count) step_tick = seq.tick;
+        if (seq_step_insert(&seq, step_tick, seq.rec_track, note, vel, seq_step_ticks(&song))) { notice_text = "SONG FULL"; return; }
+        step_held[note >> 3] |= bit; ++step_count;
+    } else if ((kind == 0x80 || kind == 0x90) && (step_held[note >> 3] & bit)) {
+        step_held[note >> 3] &= (uint8_t)~bit;
+        if (step_count && !--step_count) seq_locate(&seq, step_tick + seq_step_ticks(&song));
+    }
+}
+
 int fm4_song_load(unsigned n)
 {
     seq_stop(&seq);
+    fm4_arm(-1);
     n &= 7;
     if (song_read(n, &song)) seq_song_clear(&song, n);
     if (song.count > SEQ_MAX_EVENTS) seq_song_clear(&song, n);
@@ -411,10 +445,19 @@ void fm4_transport(unsigned action)
 {
     switch (action) {
     case 0:
-        if (seq.state == SEQ_RECORDING) { seq_stop(&seq); if (seq_merge(&seq)) notice_text = "TAKE MERGED"; }
+        if (seq.state == SEQ_RECORDING) { seq_stop(&seq); if (seq_merge(&seq)) notice_text = "TAKE MERGED"; fm4_arm(-1); }
+        else if (seq.state == SEQ_COUNTIN) { seq_stop(&seq); seq.rec_count = 0; }
         else seq_stop(&seq);
         break;
-    case 1: seq.ext_clock = sys.clock_ext; seq_play(&seq); break;
+    case 1:
+        if (seq.state != SEQ_STOPPED) break;
+        seq.ext_clock = sys.clock_ext;
+        if (seq.armed) {
+            record_part = (uint8_t)active_part;
+            fm4_zero(step_held, sizeof step_held); step_count = 0;
+            seq_record_countin(&seq, seq.rec_track, seq.ext_clock ? 0 : 4);   /* MIDI clock: the master counts in */
+        } else seq_play(&seq);
+        break;
     case 2: fm4_record(active_part); break;
     }
 }
@@ -467,6 +510,7 @@ void fm4_sysex_in(const uint8_t *m, size_t n)
 }
 
 /* ---- Audio ------------------------------------------------------------------ */
+#define STEP_FLAG (1U << 30)          /* ring_back: a note for step entry */
 static FM4_AUDIO_CODE void handle_event(uint32_t e, int local)
 {
     uint8_t m[3] = { (uint8_t)e, (uint8_t)(e >> 8), (uint8_t)(e >> 16) };
@@ -482,13 +526,17 @@ static FM4_AUDIO_CODE void handle_event(uint32_t e, int local)
         if (kind == 0x80 || kind == 0x90) {
             multi_note(&M, active_part, m[1], kind == 0x90 ? m[2] : 0);
             if (seq.state == SEQ_RECORDING) seq_capture(&seq, (uint8_t)(kind | active_part), m[1], kind == 0x90 ? m[2] : 0);
+            else if (seq.armed && seq.state == SEQ_STOPPED) ring_put(&ring_back, (e & 0xFFFFFFU) | STEP_FLAG);
             return;
         }
     }
     multi_midi(&M, m, 3);
-    if (seq.state == SEQ_RECORDING && !local) {
+    if ((seq.state == SEQ_RECORDING || (seq.armed && seq.state == SEQ_STOPPED)) && !local && (kind == 0x80 || kind == 0x90 || seq.state == SEQ_RECORDING)) {
         unsigned parts = multi_parts_for_channel(&M, m[0] & 15);
-        if (parts & (1U << active_part)) seq_capture(&seq, (uint8_t)(kind | active_part), m[1], m[2]);
+        if (parts & (1U << active_part)) {
+            if (seq.state == SEQ_RECORDING) seq_capture(&seq, (uint8_t)(kind | active_part), m[1], m[2]);
+            else ring_put(&ring_back, (e & 0xFFFFFFU) | STEP_FLAG);
+        }
     }
 }
 
@@ -693,6 +741,7 @@ void fm4_core_poll(void)
     while (ring_get(&ring_back, &e)) {
         if (e == 0xFFFFFFF0U) { fx_params f; tq5_effect(&edit_buf[0], &f); fm4_hw_audio_gate(1); fx_set(&FX, &f); fm4_hw_audio_gate(0); continue; }
         if (e == 0xFFFFFFF1U) { fm4_transport(0); continue; }
+        if ((e & (3U << 30)) == STEP_FLAG) { step_event((uint8_t)e, (uint8_t)(e >> 8), (uint8_t)(e >> 16)); continue; }
         uint8_t st = (uint8_t)e, d1 = (uint8_t)(e >> 8), d2 = (uint8_t)(e >> 16);
         if (e & (1U << 31)) {               /* sequencer output: echo to MIDI out */
             uint8_t m[3] = { st, d1, d2 }; queue_out(m, (st & 0xE0) == 0xC0 ? 2 : 3);

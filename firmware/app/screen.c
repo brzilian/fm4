@@ -11,7 +11,8 @@
  *   EDIT  operator: frequency / wave / scaling   ENV  operator envelope
  *   LFO   LFO        SEL  voice common, controllers   FX  effect
  *   GLO   system / MIDI      SAVE  name + store      ARP  MULTI (8 parts)
- *   SEQ   8-track song       PLAY  start/stop        REC record
+ *   SEQ   8-track song (3rd page: locate)   PLAY  start/stop (armed: count-in, record)
+ *   REC   arm/disarm the song track: armed + stopped = step entry
  *   OCT-/OCT+ octave (both: reset)   HOME+PLAY panic   SEQ+white key: mute
  *   Pressing the lit page button again steps through its sub-pages. */
 #include "instrument.h"
@@ -224,11 +225,11 @@ enum { PG_HOME, PG_EDIT, PG_ENV, PG_LFO, PG_VOICE, PG_FX, PG_GLO, PG_SAVE, PG_MU
 enum { OCT_DOWN, OCT_UP, BTN_FX, BTN_SEL, BTN_ENV, BTN_LFO, BTN_EDIT, BTN_GLO, BTN_HOME, BTN_SAVE, BTN_ARP, BTN_SEQ, BTN_PLAY, BTN_REC };
 #define BUTTON(b) (1U << (b))
 static const uint8_t page_button[PG_COUNT] = { BTN_HOME, BTN_EDIT, BTN_ENV, BTN_LFO, BTN_SEL, BTN_FX, BTN_GLO, BTN_SAVE, BTN_ARP, BTN_SEQ };
-static const uint8_t page_subs[PG_COUNT] = { 1, 3, 2, 2, 3, 1, 3, 1, 3, 2 };
+static const uint8_t page_subs[PG_COUNT] = { 1, 3, 2, 2, 3, 1, 3, 1, 3, 3 };
 static const char *const page_title[PG_COUNT] = { "PLAY", "OPERATOR", "ENVELOPE", "LFO", "VOICE", "EFFECT", "SYSTEM", "STORE", "MULTI", "SONG" };
 
 /* parameter kinds */
-enum { K_NONE, K_OPV, K_OPA, K_V, K_A, K_A2, K_EF, K_SYS, K_PART, K_SONG, K_EASY, K_OPON, K_ACT };
+enum { K_NONE, K_OPV, K_OPA, K_V, K_A, K_A2, K_EF, K_SYS, K_PART, K_SONG, K_EASY, K_OPON, K_ACT, K_LOC };
 typedef struct { uint8_t kind, off, fmt; const char *label; } param;
 enum { F_NUM, F_RATIO, F_DET, F_WAVE, F_ONOFF, F_FIXRG, F_SHFT, F_LFW, F_POLY, F_TRPS, F_CH, F_FX, F_MODE,
        F_TUNE, F_PAN, F_SIGNED7, F_NOTE, F_SHIFT24, F_TEMPO, F_QUANT, F_PMODE, F_CLOCK, F_SIGNED, F_ACT };
@@ -253,7 +254,8 @@ static const param params[PG_COUNT][3][4] = {
                   {{K_PART,4,F_NOTE,"LOW KEY"}, {K_PART,5,F_NOTE,"HIGH KEY"}, {K_PART,6,F_SIGNED7,"DETUNE"}, {K_PART,8,F_SHIFT24,"SHIFT"}},
                   {{K_PART,7,F_NUM,"FX SEND"}, {K_PART,9,F_ONOFF,"ENABLED"}, {K_NONE,0,0,""}, {K_NONE,0,0,""}}},
     [PG_SONG] = {{{K_SONG,0,F_TEMPO,"TEMPO"}, {K_SONG,1,F_NUM,"MEASURES"}, {K_SONG,2,F_QUANT,"QUANTIZE"}, {K_SONG,3,F_ONOFF,"LOOP"}},
-                 {{K_SONG,4,F_ONOFF,"CLICK"}, {K_SONG,5,F_NUM,"TRK PART"}, {K_ACT,2,F_ACT,"CLEAR TRK"}, {K_ACT,3,F_ACT,"SAVE SONG"}}},
+                 {{K_SONG,4,F_ONOFF,"CLICK"}, {K_SONG,5,F_NUM,"TRK PART"}, {K_ACT,2,F_ACT,"CLEAR TRK"}, {K_ACT,3,F_ACT,"SAVE SONG"}},
+                 {{K_LOC,0,F_NUM,"BAR"}, {K_LOC,1,F_NUM,"BEAT"}, {K_LOC,2,F_NUM,"STEP"}, {K_LOC,3,F_NUM,"TICK"}}},
 };
 
 /* ---- UI state ------------------------------------------------------------ */
@@ -272,6 +274,7 @@ uint32_t fm4_audio_render_peak(void);
 uint32_t fm4_audio_late_blocks(void);
 static unsigned cpu_peak_pct, cpu_fm4_pct, cpu_overruns, cpu_late;
 static uint32_t cpu_seen_overruns, cpu_at;     /* see keep_sdk_alive() */
+static int32_t batt_raw; static uint32_t batt_at; static uint8_t batt_usb;
 
 static fm4_system *S(void) { return fm4_sys(); }
 static unsigned part(void) { return fm4_active_part(); }
@@ -333,12 +336,42 @@ static uint8_t *param_ref(const param *p, unsigned *max, int *lo)
     }
 }
 
+/* ---- Song position (SEQ page 3, step entry) ------------------------------- */
+static uint32_t loc_unit(unsigned which)
+{
+    seq_song *g = fm4_seq()->song;
+    return which == 0 ? 4U * SEQ_PPQ : which == 1 ? SEQ_PPQ : which == 2 ? seq_step_ticks(g) : 1U;
+}
+static void scrub(unsigned which, int d)
+{
+    seq_state *q = fm4_seq();
+    if (q->state != SEQ_STOPPED) { show("STOP TO SCRUB"); return; }
+    uint32_t len = seq_song_ticks(q->song), u = loc_unit(which);
+    int64_t t = (int64_t)q->tick + (int64_t)d * u;
+    if (which == 2 && d) t = ((int64_t)q->tick / u + d) * u;      /* steps snap to the grid */
+    t %= (int64_t)len; if (t < 0) t += len;
+    seq_locate(q, (uint32_t)t);
+}
+static void fmt_pos(char *o, uint32_t tick)                         /* "01:1:00" bar:beat:tick */
+{
+    fmt_uint(o, tick / (4U * SEQ_PPQ) + 1U, 2); strcat(o, ":");
+    fmt_uint(o + strlen(o), tick / SEQ_PPQ % 4U + 1U, 1); strcat(o, ":");
+    fmt_uint(o + strlen(o), tick % SEQ_PPQ, 2);
+}
+static const char *const quant_name[7] = { "OFF", "1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32" };
+
 static void param_text(const param *p, char *o)
 {
     unsigned max; int lo; o[0] = 0;
     if (p->kind == K_NONE) return;
     if (p->kind == K_EASY) { fmt_int(o, easy[p->off]); return; }
     if (p->kind == K_OPON) { strcpy(o, (V()->opmask >> (op - 1)) & 1 ? "ON" : "OFF"); return; }
+    if (p->kind == K_LOC) {
+        uint32_t t = fm4_seq()->tick;
+        unsigned v = p->off == 0 ? t / (4U * SEQ_PPQ) + 1U : p->off == 1 ? t / SEQ_PPQ % 4U + 1U
+                   : p->off == 2 ? t % (4U * SEQ_PPQ) / loc_unit(2) + 1U : t % SEQ_PPQ;
+        fmt_uint(o, v, 1); return;
+    }
     if (p->kind == K_SONG && p->off == 0) { unsigned t = fm4_seq()->song->tempo; fmt_uint(o, t / 10, 1); strcat(o, "."); fmt_uint(o + strlen(o), t % 10, 1); return; }
     if (p->kind == K_ACT) {
         if (p->off == 0) { char ch[2] = { (char)V()->vced[TQ5_NAME + save_cursor], 0 }; strcpy(o, "'"); strcat(o, ch); strcat(o, "'"); }
@@ -370,7 +403,7 @@ static void param_text(const param *p, char *o)
     case F_PAN: if (v == 64) strcpy(o, "C"); else { strcpy(o, v < 64 ? "L" : "R"); fmt_uint(o + 1, (unsigned)(v < 64 ? 64 - v : v - 64), 1); } break;
     case F_SIGNED7: case F_SHIFT24: case F_SIGNED: fmt_int(o, v); break;
     case F_NOTE: fmt_note(o, (unsigned)v); break;
-    case F_QUANT: { static const char *s[7] = { "OFF", "1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32" }; strcpy(o, s[v > 6 ? 6 : v]); break; }
+    case F_QUANT: strcpy(o, quant_name[v > 6 ? 6 : v]); break;
     case F_CLOCK: strcpy(o, v ? "MIDI" : "INT"); break;
     default: fmt_uint(o, (unsigned)v, 1); break;
     }
@@ -399,6 +432,7 @@ static void edit_param(const param *p, int d)
     if (!d || p->kind == K_NONE) return;
     if (p->kind == K_EASY) { easy_edit(p->off, d); fm4_edit_commit(part()); return; }
     if (p->kind == K_OPON) { V()->opmask ^= (uint8_t)(1U << (op - 1)); fm4_edit_commit(part()); return; }
+    if (p->kind == K_LOC) { scrub(p->off, d); return; }
     if (p->kind == K_SONG && p->off == 0) {
         seq_song *g = fm4_seq()->song; g->tempo = (uint16_t)fm4_clamp(g->tempo + d * 10, 300, 3000); return;
     }
@@ -508,9 +542,10 @@ static void draw_header(void)
     unsigned t = q->song->tempo;
     fmt_uint(s, t / 10, 1);
     text(170, 6, s, 1, DIM);
-    uint16_t c = q->state == SEQ_RECORDING ? RED : q->state == SEQ_PLAYING ? GREEN : DIM;
-    if (q->state == SEQ_STOPPED) fill(222, 5, 9, 9, c);
-    else if (q->state == SEQ_RECORDING) { fill(220, 5, 11, 11, c); }
+    uint16_t c = q->state == SEQ_RECORDING || q->state == SEQ_COUNTIN ? RED : q->state == SEQ_PLAYING ? GREEN : q->armed ? RED : DIM;
+    if (q->state == SEQ_STOPPED && q->armed) { fill(221, 4, 11, 11, c); fill(223, 6, 7, 7, PANEL); }   /* armed: red ring */
+    else if (q->state == SEQ_STOPPED) fill(222, 5, 9, 9, c);
+    else if (q->state == SEQ_RECORDING || q->state == SEQ_COUNTIN) { fill(220, 5, 11, 11, c); }
     else for (unsigned i = 0; i < 9; ++i) line(222, 5 + i / 2, 222 + i, 5 + i / 2, c), line(222, 13 - i / 2, 222 + i, 13 - i / 2, c);
     /* voice activity meter */
     unsigned n = fm4_voices_active();
@@ -526,6 +561,51 @@ static void draw_voice_line(unsigned y)
     text(6, y, s, 2, AMBER);
     tq5_voice_name(V(), name);
     text(48, y, name, 2, TEXT);
+}
+
+/* Note-ons of the tracks in `mask` as marks across `w` pixels. Adjacent
+ * columns merge into one fill so a busy song stays inside the display list. */
+static void draw_lane(unsigned x, unsigned y, unsigned w, unsigned h, unsigned mask, uint16_t fg)
+{
+    seq_song *g = fm4_seq()->song;
+    uint32_t len = seq_song_ticks(g);
+    uint8_t col[30]; memset(col, 0, sizeof col);
+    if (w > 240) w = 240;
+    for (unsigned i = 0; i < g->count; ++i) {
+        const seq_event *e = &g->ev[i];
+        if ((e->status & 0xf0) != 0x90 || !e->d2 || !((mask >> ((e->tick >> 24) & 7)) & 1)) continue;
+        unsigned c = (unsigned)((uint64_t)(e->tick & 0xffffff) * (w - 1) / len);
+        col[c >> 3] |= (uint8_t)(1U << (c & 7));
+    }
+    for (unsigned c = 0; c < w;) {
+        if (!(col[c >> 3] & (1U << (c & 7)))) { ++c; continue; }
+        unsigned run = c;
+        while (run < w && (col[run >> 3] & (1U << (run & 7)))) ++run;
+        fill(x + c, y, run - c, h, fg);
+        c = run;
+    }
+}
+
+/* Battery: the FM-1 reads its cell through a divider on ADC channel 3 and
+ * has no charger status line. Stock V15 shows 0-3 bars at raw 531/561/591;
+ * the percentage interpolates that scale (501 = empty, 621 = full) and is an
+ * estimate. On USB power the cell is charging and reads high. */
+static unsigned batt_pct(void)
+{
+    int32_t p = (batt_raw - 501) * 100 / 120;
+    return (unsigned)fm4_clamp(p, 0, 100);
+}
+static void draw_battery(unsigned x, unsigned y)
+{
+    char s[24];
+    unsigned pct = batt_pct();
+    uint16_t c = pct <= 15 ? RED : pct <= 35 ? AMBER : GREEN;
+    text(x, y - 16, "BATTERY", 1, DIM);
+    fill(x, y, 52, 16, TEXT); fill(x + 52, y + 5, 3, 6, TEXT); fill(x + 1, y + 1, 50, 14, BACK);
+    fill(x + 2, y + 2, pct * 48U / 100U, 12, batt_usb ? ACCENT : c);
+    strcpy(s, "~"); fmt_uint(s + 1, pct, 1); strcat(s, "%"); text(x + 60, y + 4, s, 1, batt_usb ? ACCENT : c);
+    text(x, y + 22, batt_usb ? "USB: CHARGING" : "ON BATTERY", 1, batt_usb ? ACCENT : DIM);
+    strcpy(s, "ADC "); fmt_uint(s + 4, (unsigned)batt_raw, 1); text(x, y + 36, s, 1, DIM);
 }
 
 static void draw(void)
@@ -613,6 +693,7 @@ static void draw(void)
         fill(16, 146, 102, 8, PANEL); fill(17, 147, cpu_peak_pct > 100 ? 100 : cpu_peak_pct, 6, cpu_peak_pct > 85 ? RED : GREEN);
         strcpy(s, "FM4 "); fmt_uint(s + strlen(s), cpu_fm4_pct, 1); strcat(s, "% LATE "); fmt_uint(s + strlen(s), cpu_late, 1);
         text(16, 160, s, 1, DIM);
+        draw_battery(150, 56);
         break;
     case PG_SAVE: {
         text(16, 34, "STORE VOICE TO USER", 1, DIM);
@@ -643,28 +724,46 @@ static void draw(void)
     case PG_SONG: {
         seq_state *q = fm4_seq(); seq_song *g = q->song;
         strcpy(s, "SONG "); fmt_uint(s + 5, S()->song + 1U, 1); text(8, 28, s, 2, AMBER);
-        strcpy(s, "BAR "); fmt_uint(s + 4, q->tick / (4 * SEQ_PPQ) + 1, 2); strcat(s, "/"); fmt_uint(s + strlen(s), g->measures, 2); text(110, 32, s, 1, TEXT);
+        fmt_pos(s, q->tick); strcat(s, " /"); fmt_uint(s + strlen(s), g->measures, 2); text(96, 32, s, 1, TEXT);
         strcpy(s, "EV "); fmt_uint(s + 3, g->count, 1); text(186, 32, s, 1, DIM);
+        if (sub == 2) {                                  /* LOCATE: big position, step size, arm state */
+            fmt_pos(s, q->tick); text(16, 56, s, 4, q->armed ? RED : TEXT);
+            strcpy(s, "STEP "); strcat(s, quant_name[g->quantize > 6 ? 6 : g->quantize]);
+            if (!g->quantize) strcat(s, " (1/16)");
+            text(16, 96, s, 1, DIM);
+            strcpy(s, "TR"); s[2] = (char)('1' + song_track); s[3] = 0;
+            if (q->armed) { strcat(s, " ARMED: KEYS STEP"); text(16, 112, s, 1, RED); text(16, 126, "PLAY: COUNT-IN, REC", 1, DIM); }
+            else { strcat(s, ": REC ARMS IT"); text(16, 112, s, 1, DIM); }
+            text(16, 140, q->state == SEQ_STOPPED ? "KNOBS/SELECT: MOVE" : "STOP TO MOVE", 1, DIM);
+            unsigned len = seq_song_ticks(g);
+            fill(16, 158, 208, 12, PANEL);
+            for (unsigned b = 1; b < g->measures && g->measures <= 52; ++b) fill(16 + b * 4U * SEQ_PPQ * 207U / len, 158, 1, 12, BACK);
+            draw_lane(16, 165, 208, 3, 0xffU & ~(1U << song_track), DIM);
+            draw_lane(16, 160, 208, 5, 1U << song_track, TEXT);
+            fill(16 + q->tick * 207U / len, 154, 1, 20, q->armed ? RED : ACCENT);
+            break;
+        }
         for (unsigned t = 0; t < SEQ_TRACKS; ++t) {
             unsigned y = 52 + t * 16, used = 0;
             for (unsigned i = 0; i < g->count; ++i) if (((g->ev[i].tick >> 24) & 7) == t) { used = 1; break; }
             fill(4, y, 232, 14, t == song_track ? PANEL : BACK);
             strcpy(s, "TR"); s[2] = (char)('1' + t); s[3] = 0; text(8, y + 4, s, 1, t == song_track ? ACCENT : DIM);
             strcpy(s, "P"); s[1] = (char)('1' + g->track_part[t]); s[2] = 0; text(32, y + 4, s, 1, DIM);
-            text(52, y + 4, (g->mute >> t) & 1 ? "MUTE" : used ? "DATA" : "----", 1, (g->mute >> t) & 1 ? RED : used ? GREEN : DIM);
-            /* position bar */
-            unsigned len = seq_song_ticks(g);
+            if (q->armed && t == q->rec_track) text(52, y + 4, "ARM", 1, RED);
+            else text(52, y + 4, (g->mute >> t) & 1 ? "MUTE" : used ? "DATA" : "----", 1, (g->mute >> t) & 1 ? RED : used ? GREEN : DIM);
             fill(90, y + 5, 140, 4, BACK);
-            if (used) for (unsigned i = 0; i < g->count; i += 1) if (((g->ev[i].tick >> 24) & 7) == t && (g->ev[i].status & 0xf0) == 0x90)
-                fill(90 + (g->ev[i].tick & 0xffffff) * 139U / len, y + 4, 1, 6, TEXT);
+            if (used) draw_lane(90, y + 4, 140, 6, 1U << t, TEXT);
         }
         unsigned len = seq_song_ticks(g);
-        fill(90 + q->tick * 139U / len, 50, 1, 130, q->state == SEQ_RECORDING ? RED : ACCENT);
+        fill(90 + q->tick * 139U / len, 50, 1, 130, q->state == SEQ_RECORDING || q->armed ? RED : ACCENT);
         break;
     }
     }
     draw_knobs();
-    if (notice && (int32_t)(fm1_millis() - notice_until) < 0) {
+    if (fm4_seq()->state == SEQ_COUNTIN) {
+        strcpy(s, "COUNT-IN "); fmt_uint(s + 9, (fm4_seq()->countin + SEQ_PPQ - 1) / SEQ_PPQ, 1);
+        fill(10, 176, 220, 16, RED); text(14, 181, s, 1, TEXT);
+    } else if (notice && (int32_t)(fm1_millis() - notice_until) < 0) {
         fill(10, 176, 220, 16, AMBER);
         text(14, 181, notice, 1, BACK);
     } else notice = 0;
@@ -681,7 +780,8 @@ static void leds(uint32_t keys)
         int on = 0;
         for (unsigned p = 0; p < PG_COUNT; ++p) if (page_button[p] == b && page == p) on = 1;
         if (b == BTN_PLAY) on = q->state != SEQ_STOPPED;
-        if (b == BTN_REC) on = q->state == SEQ_RECORDING ? (int)blink : 0;
+        if (b == BTN_REC) on = q->state == SEQ_RECORDING ? (int)blink : q->state == SEQ_COUNTIN ? (int)((now / 125U) & 1U)
+                             : q->armed && q->state == SEQ_STOPPED;
         if (b == OCT_DOWN) on = octave < 0;
         if (b == OCT_UP) on = octave > 0;
         fm1_led_set(b, on);
@@ -873,8 +973,15 @@ void groove_screen_control(void)
     }
     if (pressed & BUTTON(BTN_PLAY)) fm4_transport(fm4_seq()->state == SEQ_STOPPED ? 1 : 0);
     if (pressed & BUTTON(BTN_REC)) {
-        if (fm4_seq()->state == SEQ_RECORDING) fm4_transport(0);
-        else { fm4_seq()->song->track_part[song_track] = (uint8_t)part(); fm4_record(song_track); show("RECORDING"); }
+        seq_state *q = fm4_seq();
+        if (q->state == SEQ_RECORDING || q->state == SEQ_COUNTIN) fm4_transport(0);
+        else if (q->state == SEQ_PLAYING) show("STOP, THEN REC TO ARM");
+        else if (q->armed) { fm4_arm(-1); show("REC OFF"); }
+        else {
+            q->song->track_part[song_track] = (uint8_t)part(); fm4_arm((int)song_track);
+            strcpy(notice_buf, "TR"); notice_buf[2] = (char)('1' + song_track); notice_buf[3] = 0;
+            strcat(notice_buf, " ARMED: STEP / PLAY"); show(notice_buf);
+        }
     }
 
     /* encoders */
@@ -889,7 +996,13 @@ void groove_screen_control(void)
         easy[0] = easy[1] = easy[2] = 0;
     }
     if (e[1]) {   /* ALGORITHM */
-        if (page == PG_SONG) song_track = (unsigned)fm4_clamp((int)song_track + e[1], 0, 7);
+        if (page == PG_SONG) {
+            song_track = (unsigned)fm4_clamp((int)song_track + e[1], 0, 7);
+            seq_state *q = fm4_seq();
+            if (q->armed && q->state == SEQ_STOPPED && q->rec_track != song_track) {
+                q->song->track_part[song_track] = (uint8_t)part(); fm4_arm((int)song_track);
+            }
+        }
         else { const param a = { K_V, TQ5_ALG, F_NUM, "" }; edit_param(&a, e[1]); }
     }
     if (e[0]) {   /* SELECT */
@@ -897,7 +1010,8 @@ void groove_screen_control(void)
         case PG_EDIT: case PG_ENV: op = (unsigned)fm4_clamp((int)op + e[0], 1, 4); break;
         case PG_SAVE: save_cursor = (unsigned)fm4_clamp((int)save_cursor + e[0], 0, 9); break;
         case PG_SONG:
-            if (fm4_seq()->state == SEQ_STOPPED) fm4_song_load((unsigned)fm4_clamp((int)S()->song + e[0], 0, 7));
+            if (sub == 2) scrub(2, e[0]);                /* LOCATE: SELECT moves by steps */
+            else if (fm4_seq()->state == SEQ_STOPPED) fm4_song_load((unsigned)fm4_clamp((int)S()->song + e[0], 0, 7));
             break;
         case PG_HOME:
             if (!S()->mode) { fm4_select(0, !fm4_multi()->bank[0], fm4_multi()->program[0]); break; }
@@ -934,6 +1048,12 @@ void groove_screen_control(void)
     }
     prev_buttons = c.buttons; prev_keys = c.keys;
 
+    if (now - batt_at >= 1000U || !batt_raw) {     /* battery: slow average, once a second */
+        batt_raw = batt_raw ? batt_raw + ((int32_t)c.battery - batt_raw) / 8 : c.battery;
+        batt_usb = fm1_device_usb_connected() != 0;
+        batt_at = now;
+        if (page == PG_GLO) changed = 1;
+    }
     if (now - cpu_at >= 1000U) {
         struct fm1_audio_stats st; fm1_audio_stats_read(&st);
         uint32_t bt = fm4_audio_block_ticks();

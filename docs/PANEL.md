@@ -46,14 +46,19 @@ Pressing the lit page button again steps to its next sub-page (shown as `1/3` in
 | **ARP** (MULTI) 1/3 | Multi part setup | Part 1–8 | CHANNEL | VOLUME | VOICES (reserve) | PAN |
 | **ARP** (MULTI) 2/3 | Part range | Part | LOW KEY | HIGH KEY | DETUNE | NOTE SHIFT |
 | **ARP** (MULTI) 3/3 | Part | Part | FX SEND | ENABLED | — | — |
-| **SEQ** (SONG) 1/2 | Song | Song 1–8 (when stopped) | TEMPO | MEASURES | QUANTIZE | LOOP |
-| **SEQ** (SONG) 2/2 | Song tools | Song | CLICK | TRACK → PART | CLEAR TRACK (turn) | SAVE SONG (turn) |
+| **SEQ** (SONG) 1/3 | Song | Song 1–8 (when stopped) | TEMPO | MEASURES | QUANTIZE | LOOP |
+| **SEQ** (SONG) 2/3 | Song tools | Song | CLICK | TRACK → PART | CLEAR TRACK (turn) | SAVE SONG (turn) |
+| **SEQ** (SONG) 3/3 | Locate | Move by steps | BAR | BEAT | STEP | TICK |
 
 **Storing a voice:** press SAVE, set the name with SELECT (cursor) and KNOB 1 (character), choose the USER slot with KNOB 4, then press SAVE again. Any other page button cancels.
 
 ## Song sequencer
 
-- **PLAY** starts/stops the current song. **REC** starts recording on the track chosen with ALGORITHM on the SONG page, playing the active part; press REC or PLAY to stop. The take is quantized (QUANTIZE) and merged into the song.
+- **PLAY** starts/stops the current song.
+- **REC** (song stopped) arms the track chosen with ALGORITHM on the SONG page for the active part; the REC LED stays lit and the track shows ARM. Press REC again to disarm. REC does nothing while the song plays (stop first).
+- **Step recording** (armed, stopped): each key (or MIDI note for the active part) is entered at the playhead with the song's QUANTIZE value as its length (QUANTIZE OFF: 1/16), and the playhead moves forward one step when the key is released. Keys held together are entered as a chord on one step. Move the playhead (rests, corrections) on SEQ page 3.
+- **Realtime recording**: arm with REC, then press **PLAY**: a 4-beat count-in (metronome, COUNT-IN 4…1 on screen, REC LED flashing fast) and recording starts at the playhead. Press PLAY or REC to stop; the take is quantized (QUANTIZE), merged, and the track is disarmed. With CLOCK = MIDI the external clock's master counts in, so recording starts immediately.
+- **SEQ page 3 (LOCATE)**: with the song stopped, knobs 1–4 move the playhead by bars, beats, steps (QUANTIZE value; snaps to the grid) and ticks; SELECT moves by steps. The position shows as BAR:BEAT:TICK and the timeline shows the armed track brighter. Positions wrap at the song ends.
 - **SEQ + white key 1–8**: mute/unmute tracks 1–8.
 - Songs are 1–99 measures of 4/4 at 96 PPQ, up to 4096 events each while playing. 8 songs are kept in Flash (SONG page 2: SAVE SONG); a saved song holds up to 1018 events (about 500 notes). A longer song is not saved and the screen shows SONG TOO LONG; clear a track or shorten it and save again.
 - FM-4 1.1 changed the storage layout so that nothing is ever written where stock V15 keeps its data. On the first start after updating from 1.0, songs move to the new layout (SONGS MOVED; songs over 1018 events keep their first 1018 events: OLD SONGS SHORTENED).
@@ -61,6 +66,7 @@ Pressing the lit page button again steps to its next sub-page (shown as `1/3` in
 
 ## Single and multi mode
 
+- **Battery** (every GLO page, top right): an estimate of the charge from the FM-1's battery reading, as a bar and ~percentage, plus the raw ADC value. The FM-1 has no charge-status signal: stock V15's 0–3 bars sit at ADC 531/561/591, and FM-4 interpolates that scale (501 = empty, 621 = full). On USB power the cell is charging, reads high, and the bar turns cyan with "USB: CHARGING".
 - **SINGLE:** part 1 plays on the basic receive channel (GLO RX CH) with all voices.
 - **MULTI:** 8 parts, each with its own channel, voice, volume, pan, key range, detune, note shift, FX send and voice reserve (TQ5/TX81Z "max notes"). SELECT chooses which part the keys and edit pages address.
 

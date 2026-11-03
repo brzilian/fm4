@@ -19,6 +19,8 @@ void fm1_controls_init(void) {}
 void fm1_controls_read(struct fm1_controls *s) { *s = ctl; for (int i = 0; i < 7; ++i) ctl.encoders[i] = 0; }
 void fm1_led_set(unsigned key, int on) { if (key < 41) ledbits[key] = (uint8_t)on; }
 uint32_t fm1_millis(void) { return now_ms; }
+static int usb_power = 1;
+int fm1_device_usb_connected(void) { return usb_power; }
 void fm1_control_request(void) {}
 void fm1_screen_init(void) {}
 void fm1_screen_fill(unsigned x, unsigned y, unsigned w, unsigned h, uint16_t c)
@@ -65,6 +67,7 @@ static void step(int polls)
     while (polls--) {
         now_ms += 10;
         fm4_core_render(audio);
+        fm4_core_poll();
         groove_screen_control();
         for (int i = 0; i < 20; ++i) groove_screen_control();   /* let all bands flush */
     }
@@ -107,6 +110,7 @@ static unsigned lit(void) { unsigned n = 0; for (int i = 0; i < 240 * 240; ++i) 
 int main(void)
 {
     memset(flash, 0xff, sizeof flash);
+    ctl.battery = 578;
     groove_screen_init();
     step(3); shot("home");
     CHECK(lit() > 2000, "home screen drawn (%u px)", lit());
@@ -122,15 +126,52 @@ int main(void)
     press(3); shot("voice");
     press(2); turn(2, 3); shot("fx");
     press(7); shot("system");
+    CHECK(lit() > 2000, "system page with battery");
     turn(2, 1); step(2); CHECK(fm4_sys()->mode == 1, "switched to MULTI");
     press(10); turn(0, 2); shot("multi");
     CHECK(fm4_active_part() == 2, "SELECT picks part 3 (%u)", fm4_active_part());
     press(8); shot("home_multi");
     press(11); turn(2, 4); shot("song");
-    /* play a key, record a take */
-    press(13); ctl.keys = 1U << 7; step(20); ctl.keys = 0; step(20); press(13); step(2);
+    seq_state *q = fm4_seq();
+    /* REC arms the track; a key while stopped is step-entered and moves the playhead one step */
+    unsigned trk = q->rec_track;
+    press(13);
+    CHECK(q->armed && q->state == SEQ_STOPPED, "REC arms (armed %u state %u)", q->armed, q->state);
+    CHECK(ledbits[13] == 1, "REC LED steady while armed");
+    uint32_t t0 = q->tick, stepl = seq_step_ticks(q->song);
+    ctl.keys = 1U << 7; step(3); ctl.keys = (1U << 7) | (1U << 11); step(3); ctl.keys = 1U << 11; step(3);
+    CHECK(q->tick == t0, "playhead waits while a chord key is held (%u)", q->tick);
+    ctl.keys = 0; step(3);
+    CHECK(q->song->count == 4, "chord step-entered as two notes (%u events)", q->song->count);
+    CHECK(q->tick == t0 + stepl, "playhead moved one step (%u -> %u)", t0, q->tick);
+    CHECK((q->song->ev[0].tick & 0xffffff) == t0 && ((q->song->ev[0].tick >> 24) & 7) == q->rec_track, "on the armed track at the playhead");
+    ctl.keys = 1U << 9; step(3); ctl.keys = 0; step(3);
+    CHECK(q->song->count == 6 && q->tick == t0 + 2 * stepl, "second step (%u events, tick %u)", q->song->count, q->tick);
     shot("song_rec");
-    CHECK(fm4_seq()->song->count >= 2, "recorded from keys (%u)", fm4_seq()->song->count);
+    (void)trk;
+    /* SEQ again twice: LOCATE page; scrub with the knobs and SELECT */
+    press(11); press(11);
+    turn(2, 1); CHECK(q->tick == t0 + 2 * stepl + 4 * SEQ_PPQ, "BAR knob +1 bar (%u)", q->tick);
+    turn(3, -1); CHECK(q->tick == t0 + 2 * stepl + 3 * SEQ_PPQ, "BEAT knob -1 beat (%u)", q->tick);
+    turn(0, -2); CHECK(q->tick == 3 * SEQ_PPQ, "SELECT steps back on the grid (%u)", q->tick);
+    turn(2, -1); CHECK(q->tick == seq_song_ticks(q->song) - SEQ_PPQ, "scrub wraps at the start (%u)", q->tick);
+    turn(2, 1); turn(5, 0);
+    shot("song_locate");
+    /* PLAY while armed: 4-beat count-in, then realtime recording from the playhead */
+    uint32_t start = q->tick;
+    press(12);
+    CHECK(q->state == SEQ_COUNTIN && q->countin <= 4 * SEQ_PPQ, "PLAY starts the count-in (state %u)", q->state);
+    shot("song_countin");
+    CHECK(q->tick == start, "position holds during the count-in (%u)", q->tick);
+    for (int i = 0; i < 800 && q->state == SEQ_COUNTIN; ++i) fm4_core_render(audio);
+    CHECK(q->state == SEQ_RECORDING, "recording after 4 beats (state %u)", q->state);
+    unsigned before = q->song->count;
+    ctl.keys = 1U << 4; step(20); ctl.keys = 0; step(20); press(12); step(2);
+    CHECK(q->state == SEQ_STOPPED && !q->armed, "PLAY stops and disarms (state %u armed %u)", q->state, q->armed);
+    CHECK(q->song->count == before + 2, "realtime take merged (%u -> %u)", before, q->song->count);
+    /* REC while playing does not start recording */
+    press(12); press(13); CHECK(q->state == SEQ_PLAYING && !q->armed, "REC while playing is refused"); press(12);
+    press(11);
     press(9); turn(0, 2); turn(2, 1); shot("save");
     press(9); step(2); shot("after_save");
     tq5_voice v; fm4_voice_get(FM4_BANK_USER, fm4_multi()->program[fm4_active_part()], &v);
