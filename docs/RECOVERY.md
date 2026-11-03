@@ -74,6 +74,8 @@ Switch the FM-1 on and plug it in. Wait 30 seconds.
   this loader (M-VAVE's own Open updater does the same under "force"). If it reports that the
   loader asked to finish its preparation step instead, wait 10 s and press Connect: an
   `ota-FM-1_015` answer is resumed as above; the same `ota-FM1C_…` answer means continue with 1b.
+  Confirmed on hardware (2026-11-03): a unit stuck at `ota-FM1C_0000000000000000` after a frozen
+  third-party install was restored to stock V15 this way, verified by the page.
 - `FM-1_015: M-VAVE stock firmware V15` with a blank screen: stock V15 is running but stops
   before it draws, which points at its data (step 3). Put it into ROM boot with
   `py fm1_unbrick.py softkey` (step 1c), then continue with step 2.
