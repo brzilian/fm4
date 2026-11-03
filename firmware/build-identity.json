@@ -1,6 +1,6 @@
 {
-  "profile": "dx7",
   "build_id": "f8fc0aa14848fca5b5cfc2df6712f161f426922e4b32af1d1549399f7e10e85b",
+  "family": "release",
   "release_version": "V14",
-  "family": "release"
+  "profile": "dx7"
 }
