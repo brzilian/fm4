@@ -113,6 +113,9 @@ test("classify, error mapping and phases", async () => {
   assert.equal(classify({ identity: "SMK-37 Pro_016", migration: true }, pkg).kind, "refuse");
   assert.equal(classify({ identity: "ota-FM-1_015", resume: true }, pkg).kind, "resume");
   assert.equal(classify({ identity: "ota-FM-1_904", resume: true }, pkg).kind, "foreign");
+  assert.equal(classify({ identity: "ota-FM1C_0000000000000000", resume: true }, pkg).kind, "openloader", "FM-4 package: never forced");
+  assert.equal(classify({ identity: "ota-FM1C_0000000000000000", migration: true }, pkg).kind, "openloader");
+  assert.equal(codeOf(new Error("设备的升级阶段不匹配")), "stagemismatch");
   assert.equal(codeOf(new Error("USB 意外断开；重新连接同一设备后用此网页重试")), "lost");
   assert.equal(codeOf(new Error("设备已重启，但固件版本校验不一致")), "mismatch");
   assert.equal(codeOf(Object.assign(new Error("x"), { code: "AMBIGUOUS" })), "ambiguous");
@@ -404,6 +407,39 @@ test("FM-4 version gate and the V15 firmware-region pin", async () => {
   assert.equal(await stockRegionOk(pkg), true);
   const bad = { ...pkg, image: pkg.image.slice() }; bad.image[1024 + 0x50000] ^= 1;
   assert.equal(await stockRegionOk(bad), false);
+});
+
+test("an fm1_open loader (ota-FM1C_…) is finished only by force-resuming stock V15", async () => {
+  const id = "ota-FM1C_0000000000000000";
+  // FM-4 mode: refused, nothing sent
+  {
+    const dev = new FakeFM2(FM1Web, FM4_IMAGE, { identity: id });
+    const { u } = await page(dev);
+    await u.connect.click();
+    assert.equal(u.error.getAttribute("data-code"), "openloader");
+    assert.match(u.errorRecovery.textContent, /Restore stock V15/);
+    assert.equal(upgradesIn(dev.sent), 0);
+  }
+  // stock mode: acknowledgement + typed INSTALL, stage-2 write, V15 verified, factory voices
+  const dev = new FakeFM2(FM1Web, STOCK_IMAGE, { identity: id, finalIdentity: "FM-1_015" });
+  const { u, ctl } = await page(dev);
+  await u.modeStock.check(true);
+  await u.connect.click();
+  assert.equal(u.error.hidden, true, `${u.errorTitle.textContent} ${u.errorDetail.textContent}`);
+  assert.match(u.device.textContent, /fm1_open update loader/);
+  assert.equal(u.haveBox.hidden, false);
+  assert.equal(u.install.disabled, true, "locked until the box is ticked");
+  await u.have.check(true);
+  assert.equal(u.install.textContent, "Force-resume with stock V15…");
+  await u.install.click();
+  assert.equal(u.confirmTypedBox.hidden, false);
+  await ctl.install();
+  assert.equal(upgradesIn(dev.sent), 0, "nothing without the typed word");
+  await u.confirmTyped.type("INSTALL"); await u.confirmGo.click();
+  assert.equal(ctl.state.phase, "done", `${u.errorTitle.textContent} ${u.errorDetail.textContent} ${ctl.state.log.slice(-6).join(" | ")}`);
+  assert.equal(dev.identity, "FM-1_015"); assert.equal(dev.bad, 0);
+  assert.equal(dev.arms.length, 0, "no arm command to a loader");
+  assert.equal(dev.factoryWrites, 32);
 });
 
 test("restore stock on a device already running V15 restores only the factory voices", async () => {

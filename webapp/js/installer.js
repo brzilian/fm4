@@ -30,6 +30,10 @@ export const FALLBACK_STOCK = Object.freeze({ schema: 1, kind: "stock", product:
 
 const fail = (code, msg, detail = "") => Object.assign(new Error(msg), { code, detail });
 const FELUCCA_ID = /^FM-1_(9\d\d|000)$/;
+// Update loader of fm1_open-built firmware (FM-4, M-VAVE Open): "ota-FM1C_" + 16 hex digits
+// (WebUpdate.js prepare(); the string lives in the SDK library). Only stock V15 is offered
+// through it, with force, the same route M-VAVE's own Open updater takes for any ota-* loader.
+export const OPEN_LOADER_ID = /^ota-FM1C_[0-9a-f]{16}$/i;
 const hex8 = (s) => (s || "").slice(0, 12);
 
 // error codes -> what happened, what to do next
@@ -41,6 +45,8 @@ export const ERRORS = {
   busyport: ["The FM-1's MIDI port could not be opened.", "Close other pages and programs that use MIDI, replug the USB cable, then press Connect."],
   refused: ["This device cannot be updated from this page.", "Nothing was sent. Return it to stock V15 with its own firmware's updater first, or use the Unbricker."],
   foreign: ["The FM-1 is in another firmware's update loader.", "Nothing was sent. Finish that update with the updater that started it; this page only resumes through the vendor loader."],
+  openloader: ["The FM-1 is waiting in an fm1_open update loader.", "Nothing was sent. This page can finish it only by writing stock V15: choose Restore stock V15, press Connect, tick the box and use Force-resume with stock V15."],
+  stagemismatch: ["The loader asked to finish its preparation step instead of the write.", "The firmware was not written. Wait 10 s, then press Connect to read the FM-1's state: if it now shows ota-FM-1_015 (vendor loader), tick the box and Resume; if it still shows the same loader, stop and use the Windows recovery in docs/RECOVERY.md."],
   same: ["This build is already installed.", "Nothing was sent. There is nothing to do."],
   busydevice: ["The FM-1 reports an update already in progress.", "Switch the FM-1 off and on, then press Connect."],
   changed: ["The device changed since it was identified.", "Nothing was written. Press Connect again and repeat the backup."],
@@ -63,7 +69,8 @@ const MESSAGE_CODES = [
   [/设备停止请求数据|升级超过最长等待时间/, "stopped"],
   [/等待设备重连超时/, "noreturn"],
   [/固件版本校验不一致/, "mismatch"],
-  [/设备读取超出固件包范围|设备请求长度无效|设备的升级阶段不匹配/, "badreq"],
+  [/设备的升级阶段不匹配/, "stagemismatch"],
+  [/设备读取超出固件包范围|设备请求长度无效/, "badreq"],
   [/多台|MIDI 端口过多/, "ambiguous"],
   [/打开 MIDI 端口超时|关闭 MIDI 端口超时/, "busyport"],
   [/设备身份已改变|设备状态已改变|请重新连接设备/, "changed"],
@@ -111,11 +118,16 @@ export function progressOf(phase, pct) {
 export function classify(result, pkg) {
   const id = result.identity || "";
   if (result.resume) {
-    if (id !== pkg.loaderIdentity) return { kind: "foreign", identity: id };
+    if (id !== pkg.loaderIdentity) {
+      if (OPEN_LOADER_ID.test(id)) return pkg.kind === "stock"
+        ? { kind: "forced", identity: id, force: true }
+        : { kind: "openloader", identity: id };
+      return { kind: "foreign", identity: id };
+    }
     return { kind: "resume", identity: id, force: false };
   }
   if (result.migration || result.legacy) {
-    if (/^ota-/i.test(id)) return { kind: "foreign", identity: id };
+    if (/^ota-/i.test(id)) return { kind: OPEN_LOADER_ID.test(id) ? "openloader" : "foreign", identity: id };
     if (id === "FM-1_015") return { kind: "stock", identity: id, force: true, migration: pkg.kind !== "stock" };
     if (FELUCCA_ID.test(id)) return { kind: "felucca", identity: id, force: true, migration: true };
     return { kind: "refuse", identity: id };
@@ -134,6 +146,8 @@ export function describeDevice(c) {
     case "felucca": return `${c.identity}: Felucca-family firmware (Felucca, SLOOP, ORBIT…)`;
     case "resume": return `${c.identity}: vendor update loader. An interrupted write can be resumed`;
     case "foreign": return `${c.identity}: another firmware's update loader`;
+    case "forced": return `${c.identity}: fm1_open update loader (interrupted update). It can be finished by writing stock V15 (force-resume)`;
+    case "openloader": return `${c.identity}: fm1_open update loader (interrupted update)`;
     default: return `${c.identity}: not a firmware this page can update`;
   }
 }
@@ -145,6 +159,7 @@ export const BACKUP_TEXT = {
   felucca: "Saves Felucca's complete musical archive (projects, settings, presets, patches and samples) as one .json file.",
   stock: "Stock V15 cannot be backed up over MIDI. Only a full-flash dump made with the Unbricker (Windows or Linux) preserves stock settings and user patches.",
   resume: "An update loader cannot export a backup. Continue only if you already saved a backup before the interrupted update.",
+  forced: "An update loader cannot export a backup. Force-resume writes stock V15 through this loader, the route M-VAVE's own Open updater uses for interrupted updates. If the loader only prepares, the FM-1 restarts into the stock loader and you press Connect and Resume once more. If anything fails, the Windows recovery in docs/RECOVERY.md still applies.",
 };
 const STOCK_FROM_FM4_TEXT = " Before stock V15 is written, the FM-4 is asked to confirm that none of its data lies in the flash area stock V15 uses for its settings (and to erase any it finds there). Songs are not included in the backup and are erased by the stock restore.";
 
@@ -230,15 +245,15 @@ export function createInstaller(deps) {
     if (ui.modeFm4) ui.modeFm4.disabled = busy || state.writing || !state.pkgs.fm4;
     if (ui.modeStock) ui.modeStock.disabled = busy || state.writing || !state.pkgs.stock;
     const needs = c && c.kind;
-    ui.backupBox.hidden = !needs || !["fm4", "open", "felucca", "stock", "resume"].includes(needs);
+    ui.backupBox.hidden = !needs || !["fm4", "open", "felucca", "stock", "resume", "forced"].includes(needs);
     ui.backupRun.hidden = !["fm4", "open", "felucca"].includes(needs);
     ui.backupRun.disabled = busy || state.phase !== "connected";
     ui.ackBox.hidden = needs !== "stock";
     const oldFm4 = needs === "fm4" && state.mode === "stock" && !fm4CanPrepare(c.info);
     ui.oldFm4Box.hidden = !oldFm4;
-    ui.haveBox.hidden = needs !== "resume";
+    ui.haveBox.hidden = needs !== "resume" && needs !== "forced";
     ui.backupText.textContent = needs ? (BACKUP_TEXT[needs] || "") + (needs === "fm4" && state.mode === "stock" ? STOCK_FROM_FM4_TEXT : "") : "";
-    if (needs === "stock" || needs === "resume") {
+    if (needs === "stock" || needs === "resume" || needs === "forced") {
       const box = needs === "stock" ? ui.ack : ui.have;
       if (!busy && (state.phase === "connected" || state.phase === "backedup")) {
         state.phase = box.checked ? "backedup" : "connected";
@@ -246,7 +261,7 @@ export function createInstaller(deps) {
       }
     }
     ui.install.disabled = busy || state.phase !== "backedup";
-    ui.install.textContent = c && c.kind === "resume" ? "Resume install…" : state.mode === "stock" ? "Restore stock V15…" : "Install FM-4…";
+    ui.install.textContent = c && c.kind === "resume" ? "Resume install…" : c && c.kind === "forced" ? "Force-resume with stock V15…" : state.mode === "stock" ? "Restore stock V15…" : "Install FM-4…";
   }
 
   function renderPackage() {
@@ -348,6 +363,7 @@ export function createInstaller(deps) {
       if (c.kind === "same") throw fail("same", `${c.identity} already runs build ${c.current}.`);
       if (c.kind === "refuse") throw fail("refused", `${c.identity} is neither stock V15, fm1_open/FM-4 nor a Felucca-family firmware.`);
       if (c.kind === "foreign") throw fail("foreign", `The FM-1 reports ${c.identity}; this page resumes only through ${pkg().loaderIdentity}.`);
+      if (c.kind === "openloader") throw fail("openloader", `The FM-1 reports ${c.identity}.`);
       if (state.mode === "stock" && c.kind === "stock" && !c.migration) log("device already runs V15: only the factory voices will be restored");
       state.phase = "connected";
     } catch (e) {
@@ -480,10 +496,10 @@ export function createInstaller(deps) {
   function confirmText() {
     const c = state.device, p = pkg();
     const target = p.kind === "stock" ? "M-VAVE stock V15 (with the four factory voice banks)" : `FM-4 ${p.release_version || ""} build ${hex8(p.build_id)}`;
-    const from = c.kind === "resume" ? `${c.identity} (interrupted update)` : `${c.identity}${c.current ? ` build ${hex8(c.current)}` : ""}`;
+    const from = c.kind === "resume" || c.kind === "forced" ? `${c.identity} (interrupted update)` : `${c.identity}${c.current ? ` build ${hex8(c.current)}` : ""}`;
     return { from, target, typed: needsTyped() };
   }
-  const needsTyped = () => { const c = state.device; return Boolean(c && (c.migration || c.force || state.mode === "stock" || c.kind === "resume")); };
+  const needsTyped = () => { const c = state.device; return Boolean(c && (c.migration || c.force || state.mode === "stock" || c.kind === "resume" || c.kind === "forced")); };
 
   function openConfirm() {
     if (state.busy || state.phase !== "backedup") return;

@@ -67,6 +67,13 @@ Switch the FM-1 on and plug it in. Wait 30 seconds.
   (its screen is blank too). Tick "I already saved a backup…", press **Resume install…**, type
   INSTALL. This finishes the write. Success = the page says "Stock V15 restored and verified" and
   the FM-1 shows its normal screen. **Stop here.**
+- `ota-FM1C_<16 hex digits>: fm1_open update loader`: an update started from fm1_open-built
+  firmware (FM-4, M-VAVE Open) was interrupted, or another updater armed it. Other updaters
+  (e.g. BAUDGIRL's) do not recognise this loader. With **Restore stock V15** selected, tick the
+  box, press **Force-resume with stock V15…** and type INSTALL: the page writes stock V15 through
+  this loader (M-VAVE's own Open updater does the same under "force"). If it reports that the
+  loader asked to finish its preparation step instead, wait 10 s and press Connect: an
+  `ota-FM-1_015` answer is resumed as above; the same `ota-FM1C_…` answer means continue with 1b.
 - `FM-1_015: M-VAVE stock firmware V15` with a blank screen: stock V15 is running but stops
   before it draws, which points at its data (step 3). Put it into ROM boot with
   `py fm1_unbrick.py softkey` (step 1c), then continue with step 2.
